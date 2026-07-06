@@ -1,0 +1,39 @@
+# Environment
+.env
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual Environment
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Model files (large)
+models/*.keras
+models/*.h5
+
+# Database
+*.db
+
+# Uploads & Generated
+static/uploads/
+static/heatmaps/
+static/reports/
+static/simulations/
+
+# OS
+Thumbs.db
+DumpStack.log
+*.log
+
+# Dataset images (keep CSVs)
+APTOS-19/train_images/
+APTOS-19/val_images/
+APTOS-19/test_images/
+
+# Temp
+pdf_text.txt

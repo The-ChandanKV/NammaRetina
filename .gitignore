@@ -37,3 +37,7 @@ APTOS-19/test_images/
 
 # Temp
 pdf_text.txt
+
+# Processed dataset
+processed/
+processed.zip

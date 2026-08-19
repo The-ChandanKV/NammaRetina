@@ -1,21 +1,21 @@
 # =============================================================================
-# NammaRetina - Phase 1: CNN Training Requirements
+# NammaRetina - Phase 1-8 Requirements
 # =============================================================================
 
-# ---- Deep Learning ----
+# Deep Learning
 tensorflow
 keras
 
-# ---- Image Processing ----
+# Image Processing
 opencv-python
 Pillow
 
-# ---- Data Science ----
+# Data Science and Visualization
 numpy
 pandas
 scikit-learn
 matplotlib
 seaborn
 
-# ---- Utilities ----
+# Utilities
 tqdm

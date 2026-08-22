@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NammaRetina — Doctor Dashboard</title>
+    <meta name="description" content="Doctor dashboard for monitoring diabetic retinopathy patients, scan history, and progression status.">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f6f9; }
+        .brand-header {
+            background: linear-gradient(135deg, #1a5276 0%, #2e86c1 100%);
+            color: white;
+            padding: 1.5rem 0;
+        }
+        .brand-header h1 { font-weight: 700; margin-bottom: 0.25rem; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+        .card-header-custom {
+            background: linear-gradient(135deg, #1a5276, #2e86c1);
+            color: white;
+            border-radius: 12px 12px 0 0 !important;
+            padding: 0.75rem 1.25rem;
+            font-weight: 600;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #1a5276, #2e86c1);
+            border: none;
+        }
+        .btn-primary:hover { background: linear-gradient(135deg, #154360, #1a5276); }
+        .severity-dot {
+            display: inline-block;
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .severity-0 { background: #27ae60; }
+        .severity-1 { background: #f39c12; }
+        .severity-2 { background: #e67e22; }
+        .severity-3 { background: #e74c3c; }
+        .severity-4 { background: #c0392b; }
+        .status-badge {
+            padding: 0.2rem 0.6rem;
+            border-radius: 50px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .status-initial { background: #d5dbdb; color: #2c3e50; }
+        .status-stable { background: #d5f5e3; color: #1e8449; }
+        .status-worsened { background: #fadbd8; color: #c0392b; }
+        .status-improved { background: #d4efdf; color: #27ae60; }
+        .patient-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #7f8c8d;
+        }
+        .empty-state svg { margin-bottom: 1rem; }
+        footer { color: #7f8c8d; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="brand-header text-center">
+        <h1>NammaRetina</h1>
+        <p class="mb-0">Doctor Dashboard</p>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand navbar-light bg-white shadow-sm">
+        <div class="container">
+            <ul class="navbar-nav">
+                <li class="nav-item"><a class="nav-link" href="/">Upload Scan</a></li>
+                <li class="nav-item"><a class="nav-link active" href="/dashboard">Doctor Dashboard</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 style="color: #1a5276; margin-bottom: 0;">Patient Overview</h2>
+            <a href="/" class="btn btn-primary">
+                <svg width="16" height="16" fill="currentColor" class="me-1" viewBox="0 0 16 16">
+                    <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                </svg>
+                New Scan
+            </a>
+        </div>
+
+        {% if patient_data %}
+            {% for item in patient_data %}
+            <div class="card">
+                <div class="card-header-custom">
+                    <div class="patient-card-header">
+                        <span>
+                            Patient #{{ item.patient.patient_id }} &mdash; {{ item.patient.name }}
+                        </span>
+                        <span>
+                            {% if item.latest_severity is not none %}
+                            <span class="severity-dot severity-{{ item.latest_severity }}"></span>
+                            {{ item.latest_severity_label }}
+                            {% else %}
+                            No scans
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- Patient details row -->
+                    <div class="row mb-3">
+                        <div class="col-sm-3">
+                            <small class="text-muted d-block">Age</small>
+                            <strong>{{ item.patient.age }}</strong>
+                        </div>
+                        <div class="col-sm-3">
+                            <small class="text-muted d-block">Gender</small>
+                            <strong>{{ item.patient.gender }}</strong>
+                        </div>
+                        <div class="col-sm-3">
+                            <small class="text-muted d-block">Diabetes History</small>
+                            <strong>{{ item.patient.diabetes_history }}</strong>
+                        </div>
+                        <div class="col-sm-3">
+                            <small class="text-muted d-block">Progression</small>
+                            {% set status = item.latest_status %}
+                            <span class="status-badge
+                                {% if status == 'Stable' %}status-stable
+                                {% elif status == 'Worsened' %}status-worsened
+                                {% elif status == 'Improved' %}status-improved
+                                {% else %}status-initial{% endif %}">
+                                {{ status }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Scan history table -->
+                    {% if item.reports %}
+                    <h6 class="mt-3 mb-2" style="color: #1a5276;">Scan History</h6>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Report ID</th>
+                                    <th>Date</th>
+                                    <th>Scan</th>
+                                    <th>Grad-CAM</th>
+                                    <th>Severity</th>
+                                    <th>Confidence</th>
+                                    <th>Recommendation</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for report in item.reports %}
+                                <tr>
+                                    <td class="align-middle">#{{ report.report_id }}</td>
+                                    <td class="align-middle">{{ report.date }}</td>
+                                    <td class="align-middle">
+                                        <a href="/result/{{ report.report_id }}">
+                                            <img src="{{ report.image_path|file_url }}" alt="Scan" class="rounded shadow-sm" style="width: 48px; height: 48px; object-fit: cover; border: 1px solid #dee2e6;">
+                                        </a>
+                                    </td>
+                                    <td class="align-middle">
+                                        <a href="/result/{{ report.report_id }}">
+                                            <img src="{{ report.heatmap_path|file_url }}" alt="Heatmap" class="rounded shadow-sm" style="width: 48px; height: 48px; object-fit: cover; border: 1px solid #dee2e6;">
+                                        </a>
+                                    </td>
+                                    <td class="align-middle">
+                                        <span class="severity-dot severity-{{ report.severity }}"></span>
+                                        {{ dr_classes.get(report.severity, 'Unknown') }}
+                                        ({{ report.severity }})
+                                    </td>
+                                    <td class="align-middle">{{ "%.1f"|format(report.confidence * 100) }}%</td>
+                                    <td class="align-middle">{{ report.recommendation }}</td>
+                                    <td class="align-middle">
+                                        <a href="/result/{{ report.report_id }}" class="btn btn-sm btn-outline-primary">
+                                            View
+                                        </a>
+                                        <a href="/download/{{ report.report_id }}" class="btn btn-sm btn-outline-secondary">
+                                            PDF
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted mb-0">No scan reports recorded yet.</p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+
+        {% else %}
+            <div class="card">
+                <div class="card-body empty-state">
+                    <svg width="64" height="64" fill="#bdc3c7" viewBox="0 0 16 16">
+                        <path d="M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1 1H7Zm4-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-5.784 6A2.238 2.238 0 0 1 5 13c0-1.355.68-2.75 1.936-3.72A6.325 6.325 0 0 0 5 9c-4 0-5 3-5 4s1 1 1 1h4.216ZM4.5 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/>
+                    </svg>
+                    <h5>No Patients Yet</h5>
+                    <p>Upload a retinal scan to create the first patient record.</p>
+                    <a href="/" class="btn btn-primary">Upload Scan</a>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <footer class="text-center py-3">
+        <p>NammaRetina &mdash; AI-Based Multi-Agent Diabetic Retinopathy Diagnostic System</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

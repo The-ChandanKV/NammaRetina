@@ -1,5 +1,5 @@
 # =============================================================================
-# NammaRetina - Phase 1-8 Requirements
+# NammaRetina - Requirements (Phases 1-12)
 # =============================================================================
 
 # Deep Learning
@@ -19,3 +19,15 @@ seaborn
 
 # Utilities
 tqdm
+
+# Web Application (Phase 10)
+flask
+python-dotenv
+
+# PDF Report Generation (Phase 12)
+reportlab
+
+# LLM Integration (Phase 9) — install whichever provider you use
+google-generativeai
+openai
+huggingface_hub

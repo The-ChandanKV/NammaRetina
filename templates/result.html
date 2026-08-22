@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NammaRetina — Diagnostic Result #{{ report.report_id }}</title>
+    <meta name="description" content="Diabetic retinopathy diagnostic result with AI prediction, Grad-CAM heatmap, progression tracking, and treatment recommendation.">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f6f9; }
+        .brand-header {
+            background: linear-gradient(135deg, #1a5276 0%, #2e86c1 100%);
+            color: white;
+            padding: 1.5rem 0;
+        }
+        .brand-header h1 { font-weight: 700; margin-bottom: 0.25rem; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+        .card-header-custom {
+            background: linear-gradient(135deg, #1a5276, #2e86c1);
+            color: white;
+            border-radius: 12px 12px 0 0 !important;
+            padding: 0.75rem 1.25rem;
+            font-weight: 600;
+        }
+        .severity-badge {
+            display: inline-block;
+            padding: 0.5rem 1.25rem;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: white;
+        }
+        .severity-0 { background: #27ae60; }
+        .severity-1 { background: #f39c12; }
+        .severity-2 { background: #e67e22; }
+        .severity-3 { background: #e74c3c; }
+        .severity-4 { background: #c0392b; }
+        .btn-primary {
+            background: linear-gradient(135deg, #1a5276, #2e86c1);
+            border: none;
+        }
+        .btn-primary:hover { background: linear-gradient(135deg, #154360, #1a5276); }
+        .result-image { max-width: 100%; border-radius: 8px; border: 1px solid #dee2e6; }
+        .explanation-box {
+            background: #eaf2f8;
+            border-left: 4px solid #2e86c1;
+            padding: 1rem 1.25rem;
+            border-radius: 0 8px 8px 0;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        footer { color: #7f8c8d; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="brand-header text-center">
+        <h1>NammaRetina</h1>
+        <p class="mb-0">AI-Based Diabetic Retinopathy Diagnostic System</p>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand navbar-light bg-white shadow-sm">
+        <div class="container">
+            <ul class="navbar-nav">
+                <li class="nav-item"><a class="nav-link" href="/">Upload Scan</a></li>
+                <li class="nav-item"><a class="nav-link" href="/dashboard">Doctor Dashboard</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <h2 class="mb-4" style="color: #1a5276;">Diagnostic Report #{{ report.report_id }}</h2>
+
+        <div class="row">
+            <!-- Left column: Patient + Prediction -->
+            <div class="col-lg-6">
+                <!-- Patient Info -->
+                <div class="card">
+                    <div class="card-header-custom">Patient Information</div>
+                    <div class="card-body">
+                        <table class="table table-borderless mb-0">
+                            <tr><td class="fw-bold" style="width: 40%;">Name</td><td>{{ patient.name }}</td></tr>
+                            <tr><td class="fw-bold">Age</td><td>{{ patient.age }}</td></tr>
+                            <tr><td class="fw-bold">Gender</td><td>{{ patient.gender }}</td></tr>
+                            <tr><td class="fw-bold">Diabetes History</td><td>{{ patient.diabetes_history }}</td></tr>
+                            <tr><td class="fw-bold">Report Date</td><td>{{ report.date }}</td></tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Prediction -->
+                <div class="card">
+                    <div class="card-header-custom">Diagnosis Result</div>
+                    <div class="card-body text-center">
+                        <div class="mb-3">
+                            <span class="severity-badge severity-{{ severity }}">
+                                {{ severity_label }} (Stage {{ severity }}/4)
+                            </span>
+                        </div>
+                        <p class="mb-1"><strong>Confidence:</strong> {{ confidence_pct }}%</p>
+                        <p class="mb-0"><strong>Progression:</strong> {{ progression_status }}</p>
+                    </div>
+                </div>
+
+                <!-- Treatment Recommendation -->
+                <div class="card">
+                    <div class="card-header-custom">Treatment Recommendation</div>
+                    <div class="card-body">
+                        <p class="mb-0">{{ recommendation }}</p>
+                    </div>
+                </div>
+
+                <!-- LLM Explanation -->
+                <div class="card">
+                    <div class="card-header-custom">AI-Generated Explanation</div>
+                    <div class="card-body">
+                        <div class="explanation-box">
+                            {{ llm_summary }}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Download -->
+                {% if pdf_exists %}
+                <div class="d-grid mb-4">
+                    <a href="/download/{{ report.report_id }}" class="btn btn-primary btn-lg">
+                        <svg width="20" height="20" fill="currentColor" class="me-2" viewBox="0 0 16 16">
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                        </svg>
+                        Download PDF Report
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Right column: Images -->
+            <div class="col-lg-6">
+                <!-- Uploaded Image -->
+                <div class="card">
+                    <div class="card-header-custom">Uploaded Retinal Image</div>
+                    <div class="card-body text-center">
+                        <img src="{{ image_url }}" alt="Retinal scan" class="result-image">
+                    </div>
+                </div>
+
+                <!-- Grad-CAM Heatmap -->
+                <div class="card">
+                    <div class="card-header-custom">Grad-CAM Heatmap</div>
+                    <div class="card-body text-center">
+                        <img src="{{ heatmap_url }}" alt="Grad-CAM heatmap" class="result-image">
+                        <p class="text-muted mt-2 small">Highlighted regions indicate areas the AI focused on.</p>
+                    </div>
+                </div>
+
+                <!-- Progression Graph -->
+                {% if progression_graph_url %}
+                <div class="card">
+                    <div class="card-header-custom">Progression History</div>
+                    <div class="card-body text-center">
+                        <img src="{{ progression_graph_url }}" alt="Progression graph" class="result-image">
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Simulation -->
+                {% if simulation_url %}
+                <div class="card">
+                    <div class="card-header-custom">Disease Spread Simulation</div>
+                    <div class="card-body text-center">
+                        <img src="{{ simulation_url }}" alt="Simulation" class="result-image">
+                        <p class="text-muted mt-2 small">
+                            Probabilistic visualisation — not a clinically validated forecast.
+                        </p>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <footer class="text-center py-3">
+        <p>NammaRetina &mdash; AI-Based Multi-Agent Diabetic Retinopathy Diagnostic System</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

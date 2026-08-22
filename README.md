@@ -1,87 +1,160 @@
-# NammaRetina – Phase 6-8
+# NammaRetina
 
-This project includes the Phase 6 (Progression Tracking), Phase 7 (Disease Spread Simulation), and Phase 8 (Predictive Treatment Recommendation) components for the Diabetic Retinopathy diagnostic workflow.
+**AI-Based Multi-Agent Diabetic Retinopathy Diagnostic and Progression Analysis System**
 
-## Phase 6: Progression Tracking
+NammaRetina is an end-to-end system for automated diabetic retinopathy (DR) detection, severity grading, explainable AI visualisation, progression tracking, disease spread simulation, treatment recommendation, LLM-powered report interpretation, and PDF report generation — all accessible through a Flask web application with a doctor dashboard.
 
-The progression module tracks how a patient’s diabetic retinopathy severity changes over time and stores that information in the SQLite database.
+---
 
-- `database.py` creates and manages the SQLite database and tables.
-- `progression.py` contains `track_progression(patient_id, current_severity)` and `plot_progression(patient_id)`.
-- The database stores:
-  - `Patients`
-  - `Reports`
-  - `Progression`
+## Quick Start
 
-## Phase 7: Disease Spread Simulation
-
-The simulation module provides a simple probabilistic visualization of a possible affected retinal area using:
-
-- the original image,
-- the Grad-CAM heatmap, and
-- the patient’s historical progression status.
-
-This is a visualization only and is not a clinically validated medical forecast.
-
-## Phase 8: Predictive Treatment Recommendation
-
-The treatment module provides a simple rule-based recommendation based on DR severity:
-
-- 0 -> Routine yearly screening
-- 1 -> Monitor blood sugar and follow-up
-- 2 -> Ophthalmologist consultation advised
-- 3 -> Immediate specialist consultation
-- 4 -> Urgent retinal treatment required
-
-## Database initialization
+### 1. Clone and install dependencies
 
 ```bash
-python -c "from database import init_db; init_db()"
+git clone <repository-url>
+cd NammaRetina
+pip install -r requirements.txt
 ```
 
-## Calling track_progression()
+### 2. Set up environment variables (optional)
 
-```python
-from progression import track_progression
+Create a `.env` file in the project root with your LLM API key(s). The system tries providers in this order and falls back to rule-based explanations if none are set:
 
-result = track_progression(patient_id=1, current_severity=2)
-print(result)
+```env
+# Google Gemini (recommended — already referenced in config.py)
+GEMINI_API_KEY=your-gemini-api-key
+
+# OR OpenAI
+OPENAI_API_KEY=your-openai-api-key
+
+# OR HuggingFace
+HUGGINGFACE_API_KEY=your-huggingface-api-key
 ```
 
-## Calling plot_progression()
+### 3. Place the trained model (optional)
 
-```python
-from progression import plot_progression
+If you have the trained EfficientNetB0 model file, place it at:
 
-saved_path = plot_progression(patient_id=1)
-print(saved_path)
+```
+models/efficientnetb0_dr.keras
 ```
 
-## Calling simulate_progression()
+The app works without it (using fallback predictions with 0% confidence), but real predictions require the model.
 
-```python
-from simulation import simulate_progression
-
-output_path = simulate_progression(
-    image_path='reports/sample_retina.png',
-    gradcam_path='heatmaps/sample_heatmap.png',
-    progression_history=[{'status': 'Worsened'}, {'status': 'Stable'}],
-    random_seed=7,
-)
-print(output_path)
-```
-
-## Calling get_treatment_recommendation()
-
-```python
-from treatment import get_treatment_recommendation
-
-recommendation = get_treatment_recommendation(3)
-print(recommendation)
-```
-
-## Example test command
+### 4. Run the application
 
 ```bash
-python test_phase6_8.py
+python app.py
 ```
+
+Then open **http://localhost:5000** in your browser.
+
+---
+
+## Full Pipeline
+
+When you upload a retinal image through the web interface, the following pipeline runs automatically:
+
+1. **Image Upload** — Retinal fundus photograph is saved to `static/uploads/`
+2. **Patient Registration** — Patient details are stored in the SQLite database
+3. **Model Prediction** — EfficientNetB0 classifies DR severity (0–4)
+4. **Grad-CAM Heatmap** — Highlights the retinal regions influencing the prediction
+5. **Progression Tracking** — Compares current severity against prior scans
+6. **Disease Spread Simulation** — Probabilistic visualisation of future retinal changes
+7. **Treatment Recommendation** — Rule-based clinical follow-up guidance
+8. **LLM Explanation** — Plain-language summary for doctors and patients
+9. **Database Record** — Full report saved to SQLite
+10. **PDF Report** — Downloadable medical report generated via ReportLab
+
+---
+
+## Web Routes
+
+| Route | Method | Description |
+|---|---|---|
+| `/` | GET | Upload form with patient details |
+| `/upload` | POST | Runs the full diagnostic pipeline |
+| `/result/<report_id>` | GET | Displays the diagnostic result |
+| `/dashboard` | GET | Doctor dashboard — all patients and reports |
+| `/download/<report_id>` | GET | Downloads the PDF report |
+
+---
+
+## Project Structure
+
+```
+NammaRetina/
+├── app.py                     # Flask web application (Phase 10)
+├── config.py                  # Central configuration
+├── database.py                # SQLite database layer
+├── model_loader.py            # Model loading and prediction
+├── gradcam.py                 # Grad-CAM heatmap generation (Phase 5)
+├── preprocess_local.py        # Image preprocessing pipeline (Phase 2)
+├── progression.py             # Progression tracking (Phase 6)
+├── simulation.py              # Disease spread simulation (Phase 7)
+├── treatment.py               # Treatment recommendations (Phase 8)
+├── llm_agent.py               # LLM integration (Phase 9)
+├── report_generator.py        # PDF report generation (Phase 12)
+├── requirements.txt           # Python dependencies
+├── database.db                # SQLite database
+├── APTOS-19/                  # Dataset metadata (CSVs)
+├── Colab Notebooks/           # Training and augmentation notebooks
+├── models/                    # Trained model files (.keras)
+├── static/
+│   ├── uploads/               # Uploaded retinal images
+│   ├── heatmaps/              # Grad-CAM heatmap outputs
+│   ├── reports/               # Generated PDF reports
+│   └── simulations/           # Simulation outputs
+├── reports/                   # Progression graphs
+└── templates/
+    ├── index.html             # Upload page
+    ├── result.html            # Result display page
+    └── dashboard.html         # Doctor dashboard
+```
+
+---
+
+## Implementation Phases
+
+| Phase | Component | Module |
+|---|---|---|
+| 1 | Dataset Preparation | `APTOS-19/` |
+| 2 | Preprocessing Pipeline | `preprocess_local.py` |
+| 3 | CNN Model (EfficientNetB0) | `Colab Notebooks/` |
+| 4 | Model Training | `Colab Notebooks/` |
+| 5 | Grad-CAM Integration | `gradcam.py` |
+| 6 | Progression Tracking | `progression.py` |
+| 7 | Disease Spread Simulation | `simulation.py` |
+| 8 | Treatment Recommendation | `treatment.py` |
+| 9 | LLM Integration | `llm_agent.py` |
+| 10 | Flask Web Application | `app.py` |
+| 11 | Doctor Dashboard | `templates/dashboard.html` |
+| 12 | Report Generation | `report_generator.py` |
+
+---
+
+## DR Severity Levels
+
+| Stage | Label | Recommendation |
+|---|---|---|
+| 0 | No DR | Routine yearly screening |
+| 1 | Mild | Monitor blood sugar and follow-up |
+| 2 | Moderate | Ophthalmologist consultation advised |
+| 3 | Severe | Immediate specialist consultation |
+| 4 | Proliferative DR | Urgent retinal treatment required |
+
+---
+
+## Technology Stack
+
+- **Python**, **TensorFlow / Keras**, **EfficientNetB0**
+- **OpenCV**, **Pillow**, **Matplotlib**
+- **Flask**, **SQLite**
+- **ReportLab** (PDF generation)
+- **Google Gemini / OpenAI / HuggingFace** (LLM integration)
+
+---
+
+## Team
+
+g7 — Pranav, Chandan, Jyotir, Jhenka

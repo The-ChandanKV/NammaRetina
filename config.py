@@ -90,9 +90,15 @@ TREATMENT_RECOMMENDATIONS = {
 # =============================================================================
 # Flask Configuration
 # =============================================================================
-SECRET_KEY = os.getenv("SECRET_KEY", "nammaretina-secret-key-change-in-production")
-SQLALCHEMY_DATABASE_URI = f"sqlite:///{os.path.join(BASE_DIR, 'nammaretina.db')}"
-SQLALCHEMY_TRACK_MODIFICATIONS = False
+# NOTE: the app uses raw sqlite3 against database.db (see database.py), not
+# SQLAlchemy — so no SQLALCHEMY_* settings are defined here.
+_DEFAULT_SECRET_KEY = "nammaretina-secret-key-change-in-production"
+SECRET_KEY = os.getenv("SECRET_KEY", _DEFAULT_SECRET_KEY)
+# True when no SECRET_KEY was provided via the environment. app.py warns on this
+# because sessions (and therefore logins) are insecure with the shared default.
+SECRET_KEY_IS_DEFAULT = SECRET_KEY == _DEFAULT_SECRET_KEY
+# Debug is OFF unless FLASK_DEBUG is explicitly truthy — never ship debug=True.
+DEBUG = os.getenv("FLASK_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload
 
 # =============================================================================

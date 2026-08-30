@@ -184,7 +184,13 @@ def generate_pdf(
     # ── Prediction Result ────────────────────────────────────────────────────
     elements.append(Paragraph("Diagnosis Result", styles["SectionHeading"]))
 
-    confidence_pct = round(confidence * 100, 1) if confidence <= 1.0 else round(confidence, 1)
+    # Show N/A when no real prediction was made (confidence 0.0 = model unavailable),
+    # so the report never presents a fabricated 0.0% as a genuine reading.
+    if confidence and confidence > 0:
+        confidence_pct = round(confidence * 100, 1) if confidence <= 1.0 else round(confidence, 1)
+        confidence_display = f"{confidence_pct}%"
+    else:
+        confidence_display = "N/A (model unavailable)"
 
     # Severity colour coding
     severity_colours = {
@@ -198,7 +204,7 @@ def generate_pdf(
 
     prediction_data = [
         ["Severity Level", f"{severity_label} (Stage {severity}/4)"],
-        ["Confidence", f"{confidence_pct}%"],
+        ["Confidence", confidence_display],
     ]
     prediction_table = Table(prediction_data, colWidths=[120, 350])
     prediction_table.setStyle(TableStyle([

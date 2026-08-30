@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import logging
-import random
 from pathlib import Path
 
 import cv2
@@ -62,14 +61,17 @@ def is_model_available() -> bool:
 def preprocess_image(image_path: str) -> np.ndarray:
     """Read and preprocess an image for model inference.
 
-    Returns a (1, IMG_SIZE, IMG_SIZE, 3) float32 array normalised to [0, 1].
+    Returns a (1, IMG_SIZE, IMG_SIZE, 3) float32 array normalised to [-1, 1],
+    matching the training pipeline (img / 127.5 - 1.0) in the Colab notebook.
+    Keeping train/serve normalization identical is what makes the model's
+    predictions valid at inference time.
     """
     img = cv2.imread(image_path)
     if img is None:
         raise FileNotFoundError(f"Cannot read image: {image_path}")
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = img.astype(np.float32) / 255.0
+    img = img.astype(np.float32) / 127.5 - 1.0
     return np.expand_dims(img, axis=0)
 
 
@@ -99,23 +101,15 @@ def predict_severity(image_path: str) -> dict:
             "model_used": True,
         }
 
-    # --- Fallback: deterministic pseudo-random based on image content ---
-    logger.warning("Using fallback prediction (no trained model).")
-    try:
-        img = cv2.imread(image_path)
-        if img is not None:
-            # Use mean pixel intensity to seed a deterministic result
-            seed_value = int(np.mean(img) * 100) % (NUM_CLASSES * 1000)
-            rng = random.Random(seed_value)
-            severity = rng.randint(0, NUM_CLASSES - 1)
-        else:
-            severity = 0
-    except Exception:
-        severity = 0
-
+    # --- Fallback: no trained model available ---
+    # Return a neutral result instead of a fabricated (pseudo-random) severity.
+    # confidence == 0.0 and model_used == False signal to the UI and PDF that no
+    # real prediction was performed, so a missing model can never masquerade as
+    # a genuine "Severe"/"Proliferative" diagnosis.
+    logger.warning("No trained model available — returning neutral fallback (no prediction).")
     return {
-        "severity": severity,
-        "severity_label": DR_CLASSES.get(severity, "Unknown"),
+        "severity": 0,
+        "severity_label": DR_CLASSES.get(0, "Unknown"),
         "confidence": 0.0,
         "probabilities": [0.0] * NUM_CLASSES,
         "model_used": False,

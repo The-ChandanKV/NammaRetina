@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
 from flask import (
@@ -19,19 +21,24 @@ from flask import (
     render_template,
     request,
     send_file,
+    session,
     url_for,
 )
 from werkzeug.utils import secure_filename
+from PIL import Image
 
 import config
 from database import (
     add_patient,
     add_report,
+    count_users,
+    create_user,
     get_connection,
     get_patient,
     get_progression_history,
     get_reports_for_patient,
     init_db,
+    verify_user,
     DB_PATH,
 )
 from gradcam import generate_gradcam
@@ -57,6 +64,13 @@ app = Flask(
 )
 app.secret_key = config.SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_CONTENT_LENGTH
+
+if config.SECRET_KEY_IS_DEFAULT:
+    logger.warning(
+        "SECRET_KEY is the built-in development default. Set the SECRET_KEY "
+        "environment variable to a random secret before deploying — sessions "
+        "signed with the default key are trivially forgeable."
+    )
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "tiff", "tif"}
 
@@ -100,13 +114,102 @@ def file_url_filter(rel_path: str | None) -> str:
 # ─── Routes ───────────────────────────────────────────────────────────────────
 
 
+def login_required(view):
+    """Redirect anonymous users to /login, preserving the intended destination."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    """Create a new account. The first account created becomes the admin.
+
+    Registration is public so the app can be bootstrapped with zero config. Once
+    the first (admin) account exists, an operator who wants to lock things down
+    can gate this route behind an admin check — anyone who can register can reach
+    patient data.
+    """
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if not username or not password:
+            flash("Username and password are required.", "danger")
+            return redirect(url_for("register"))
+        if len(password) < 6:
+            flash("Password must be at least 6 characters.", "danger")
+            return redirect(url_for("register"))
+        if password != confirm:
+            flash("Passwords do not match.", "danger")
+            return redirect(url_for("register"))
+
+        # First registered user bootstraps the admin role; everyone else is a doctor.
+        role = "admin" if count_users() == 0 else "doctor"
+        try:
+            user_id = create_user(username, password, role=role)
+        except sqlite3.IntegrityError:
+            flash("That username is already taken.", "danger")
+            return redirect(url_for("register"))
+
+        # Log the new user straight in.
+        session.clear()
+        session["user_id"] = user_id
+        session["username"] = username
+        session["role"] = role
+        flash(f"Welcome, {username}! Your account has been created.", "success")
+        return redirect(url_for("index"))
+
+    return render_template("register.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Authenticate an existing user."""
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        user = verify_user(username, password)
+        if user is None:
+            flash("Invalid username or password.", "danger")
+            return redirect(url_for("login"))
+
+        session.clear()
+        session["user_id"] = int(user["user_id"])
+        session["username"] = user["username"]
+        session["role"] = user["role"]
+
+        # Honour ?next= only for local paths (avoid open-redirect to another host).
+        next_url = request.args.get("next") or ""
+        if not next_url.startswith("/") or next_url.startswith("//"):
+            next_url = url_for("index")
+        flash(f"Welcome back, {user['username']}!", "success")
+        return redirect(next_url)
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    """Clear the session and return to the login page."""
+    session.clear()
+    flash("You have been logged out.", "success")
+    return redirect(url_for("login"))
+
+
 @app.route("/")
+@login_required
 def index():
     """Home page — upload form with patient details."""
     return render_template("index.html")
 
 
 @app.route("/upload", methods=["POST"])
+@login_required
 def upload():
     """Process an uploaded retinal image through the full diagnostic pipeline."""
 
@@ -144,6 +247,19 @@ def upload():
     upload_path = UPLOAD_DIR / upload_filename
     file.save(str(upload_path))
     logger.info("Image saved: %s", upload_path)
+
+    # Confirm the upload is a genuine, decodable image — the extension alone is
+    # not enough (a renamed .txt would otherwise crash the pipeline downstream).
+    try:
+        with Image.open(upload_path) as im:
+            im.verify()
+    except Exception:
+        try:
+            upload_path.unlink()
+        except OSError:
+            pass
+        flash("The uploaded file is not a valid image.", "danger")
+        return redirect(url_for("index"))
 
     # --- 3. Create or find patient -----------------------------------------
     patient_id = add_patient(
@@ -199,7 +315,7 @@ def upload():
     logger.info("Report saved with ID %d", report_id)
 
     # --- 8. Progression tracking -------------------------------------------
-    progression_result = track_progression(patient_id, severity)
+    progression_result = track_progression(patient_id, severity, visit_date=today_str)
     progression_status = progression_result["status"]
     logger.info("Progression status: %s", progression_status)
 
@@ -270,6 +386,7 @@ def upload():
 
 
 @app.route("/result/<int:report_id>")
+@login_required
 def result(report_id: int):
     """Display the full diagnostic result for a report."""
     conn = get_connection()
@@ -319,19 +436,26 @@ def result(report_id: int):
             filename=f"progression_{report['patient_id']}.png",
         )
 
-    # Check for simulation
+    # Check for a per-image simulation, named after the uploaded image's stem
+    # (matches simulation.simulate_progression, which writes to static/simulations/).
     simulation_url = None
-    sim_path = Path(config.BASE_DIR) / "reports" / "simulated_progression.png"
-    if sim_path.exists():
-        simulation_url = url_for(
-            "serve_file", subdir="reports", filename="simulated_progression.png"
-        )
+    if image_path:
+        sim_filename = f"{Path(str(image_path)).stem}_simulation.png"
+        sim_path = Path(config.SIMULATION_DIR) / sim_filename
+        if sim_path.exists():
+            simulation_url = url_for(
+                "serve_file", subdir="simulations", filename=sim_filename
+            )
 
     # Check for PDF
     pdf_exists = (Path(config.REPORT_DIR) / f"report_{report_id}.pdf").exists()
 
     image_url = db_path_to_url(image_path)
     heatmap_url = db_path_to_url(heatmap_path)
+
+    # A confidence of 0 means no real model ran (see model_loader fallback); the
+    # template shows "N/A" rather than a fabricated 0.0% in that case.
+    model_used = float(report["confidence"]) > 0
 
     return render_template(
         "result.html",
@@ -349,11 +473,12 @@ def result(report_id: int):
         progression_graph_url=progression_graph_url,
         simulation_url=simulation_url,
         pdf_exists=pdf_exists,
-        model_used=True,
+        model_used=model_used,
     )
 
 
 @app.route("/dashboard")
+@login_required
 def dashboard():
     """Doctor dashboard — list all patients and their reports."""
     conn = get_connection()
@@ -398,6 +523,7 @@ def dashboard():
 
 
 @app.route("/download/<int:report_id>")
+@login_required
 def download_report(report_id: int):
     """Download the generated PDF report."""
     pdf_path = Path(config.REPORT_DIR) / f"report_{report_id}.pdf"
@@ -418,6 +544,7 @@ def download_report(report_id: int):
 
 
 @app.route("/files/<subdir>/<filename>")
+@login_required
 def serve_file(subdir: str, filename: str):
     """Serve uploaded images, heatmaps, and reports from project directories.
 
@@ -472,4 +599,6 @@ if __name__ == "__main__":
     load_model()  # Pre-load on startup
 
     logger.info("Starting NammaRetina Flask application...")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    if config.DEBUG:
+        logger.warning("Running with debug=True — do not use this in production.")
+    app.run(debug=config.DEBUG, host="0.0.0.0", port=5000)

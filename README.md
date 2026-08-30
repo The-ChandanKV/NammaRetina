@@ -29,17 +29,25 @@ OPENAI_API_KEY=your-openai-api-key
 
 # OR HuggingFace
 HUGGINGFACE_API_KEY=your-huggingface-api-key
+
+# Session signing key for login (set a long random value in production).
+# If unset, a built-in development default is used and the app logs a warning.
+SECRET_KEY=change-me-to-a-long-random-string
 ```
 
 ### 3. Place the trained model (optional)
 
-If you have the trained EfficientNetB0 model file, place it at:
+The model is trained in **`Colab Notebooks/pipeline_augmentation.ipynb`** (EfficientNetB0 with a
+custom classification head, two-phase class-weighted training, and Cohen's quadratic-weighted-kappa
+evaluation). Run that notebook on a GPU (e.g. Google Colab) and download the exported
+`efficientnetb0_dr.keras`, then place it at:
 
 ```
 models/efficientnetb0_dr.keras
 ```
 
-The app works without it (using fallback predictions with 0% confidence), but real predictions require the model.
+The app works without it (using fallback predictions shown as **N/A confidence** — never a fabricated
+reading), but real predictions require the model.
 
 ### 4. Run the application
 
@@ -48,6 +56,16 @@ python app.py
 ```
 
 Then open **http://localhost:5000** in your browser.
+
+### 5. Create your account
+
+The dashboard and all patient data are behind a login. On first run, open the app and click
+**Create one** on the sign-in page to register. **The first account created becomes the admin;**
+everyone who registers afterwards is a `doctor`. All routes except `/login` and `/register` require
+you to be signed in.
+
+> To run with the auto-reloader/debugger for local development, set `FLASK_DEBUG=1`. Debug mode is
+> **off** by default so it is never accidentally enabled in production.
 
 ---
 
@@ -70,13 +88,19 @@ When you upload a retinal image through the web interface, the following pipelin
 
 ## Web Routes
 
-| Route | Method | Description |
-|---|---|---|
-| `/` | GET | Upload form with patient details |
-| `/upload` | POST | Runs the full diagnostic pipeline |
-| `/result/<report_id>` | GET | Displays the diagnostic result |
-| `/dashboard` | GET | Doctor dashboard — all patients and reports |
-| `/download/<report_id>` | GET | Downloads the PDF report |
+All routes except `/login` and `/register` require an authenticated session.
+
+| Route | Method | Auth | Description |
+|---|---|---|---|
+| `/register` | GET/POST | Public | Create an account (first user becomes admin) |
+| `/login` | GET/POST | Public | Sign in |
+| `/logout` | GET | — | Sign out |
+| `/` | GET | Required | Upload form with patient details |
+| `/upload` | POST | Required | Runs the full diagnostic pipeline |
+| `/result/<report_id>` | GET | Required | Displays the diagnostic result |
+| `/dashboard` | GET | Required | Doctor dashboard — all patients and reports |
+| `/download/<report_id>` | GET | Required | Downloads the PDF report |
+| `/files/<subdir>/<filename>` | GET | Required | Serves uploaded images, heatmaps, and simulations |
 
 ---
 
@@ -109,7 +133,9 @@ NammaRetina/
 └── templates/
     ├── index.html             # Upload page
     ├── result.html            # Result display page
-    └── dashboard.html         # Doctor dashboard
+    ├── dashboard.html         # Doctor dashboard
+    ├── login.html             # Sign-in page
+    └── register.html          # Account creation page
 ```
 
 ---

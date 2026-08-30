@@ -270,8 +270,12 @@ def main():
             )
             print("Report added with ID: {}".format(report_id))
             
-            # Track progression using existing progression.py function
-            progression_result = track_progression(patient_id, severity)
+            # Track progression using existing progression.py function.
+            # Stamp the progression record with this visit's date (not "today"),
+            # so the timeline matches the report we just added.
+            progression_result = track_progression(
+                patient_id, severity, visit_date=visit_date, db_path=DB_PATH
+            )
             
             visits_added.append({
                 "visit_num": visit_num,

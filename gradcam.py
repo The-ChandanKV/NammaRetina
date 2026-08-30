@@ -97,6 +97,30 @@ def generate_gradcam(
     return str(output_path)
 
 
+def _find_conv_layer(model, layer_name: str):
+    """Locate a layer by name, searching nested sub-models if needed.
+
+    A model built with ``EfficientNetB0(input_tensor=...)`` keeps ``top_conv`` at
+    the top level, so the direct lookup succeeds. But if the backbone is instead
+    wrapped as a single nested sub-model layer, ``model.get_layer`` misses it;
+    this falls back to scanning one level of nested sub-models. Returns the layer
+    object, or ``None`` if it cannot be found anywhere.
+    """
+    try:
+        return model.get_layer(layer_name)
+    except Exception:
+        pass
+    for layer in getattr(model, "layers", []):
+        if getattr(layer, "name", None) == layer_name:
+            return layer
+        if hasattr(layer, "layers"):  # nested sub-model (e.g. the EfficientNet backbone)
+            try:
+                return layer.get_layer(layer_name)
+            except Exception:
+                continue
+    return None
+
+
 def _compute_gradcam(
     model, image_path: str, predicted_class: int, layer_name: str
 ) -> np.ndarray:
@@ -110,12 +134,19 @@ def _compute_gradcam(
     img = cv2.imread(image_path)
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_array = np.expand_dims(img.astype(np.float32) / 255.0, axis=0)
+    img_array = np.expand_dims(img.astype(np.float32) / 127.5 - 1.0, axis=0)
+
+    # Locate the target conv layer, searching nested sub-models as a fallback.
+    conv_layer = _find_conv_layer(model, layer_name)
+    if conv_layer is None:
+        raise ValueError(
+            f"Grad-CAM layer '{layer_name}' not found in model (including nested sub-models)."
+        )
 
     # Build a sub-model that outputs the conv layer activations AND the predictions
     grad_model = tf.keras.Model(
         inputs=model.input,
-        outputs=[model.get_layer(layer_name).output, model.output],
+        outputs=[conv_layer.output, model.output],
     )
 
     with tf.GradientTape() as tape:

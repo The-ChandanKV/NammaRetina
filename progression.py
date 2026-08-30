@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from database import add_progression_record, get_patient, get_reports_for_patient
+from database import DB_PATH, add_progression_record, get_patient, get_reports_for_patient
 
 
 def _validate_severity(severity: int) -> int:
@@ -20,13 +20,18 @@ def _validate_severity(severity: int) -> int:
     return severity
 
 
-def track_progression(patient_id: int, current_severity: int):
-    """Track the change in pathology severity between the most recent prior report and the current one."""
-    if get_patient(patient_id) is None:
+def track_progression(patient_id: int, current_severity: int, visit_date: str | None = None, db_path=DB_PATH):
+    """Track the change in pathology severity between the most recent prior report and the current one.
+
+    ``visit_date`` stamps the progression record with the report's date (so the
+    progression timeline matches the report timeline); it defaults to today only
+    when a caller does not supply one.
+    """
+    if get_patient(patient_id, db_path=db_path) is None:
         raise ValueError(f"Patient {patient_id} does not exist.")
 
     current_severity = _validate_severity(current_severity)
-    reports = get_reports_for_patient(patient_id)
+    reports = get_reports_for_patient(patient_id, db_path=db_path)
 
     previous_severity = None
     if reports:
@@ -47,29 +52,33 @@ def track_progression(patient_id: int, current_severity: int):
     else:
         status = "Stable"
 
+    if visit_date is None:
+        visit_date = datetime.now().strftime("%Y-%m-%d")
+
     record = {
         "patient_id": patient_id,
         "previous_severity": previous_severity,
         "current_severity": current_severity,
         "status": status,
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        "date": visit_date,
     }
     add_progression_record(
         patient_id=patient_id,
         previous_severity=previous_severity,
         current_severity=current_severity,
         status=status,
-        date=record["date"],
+        date=visit_date,
+        db_path=db_path,
     )
     return record
 
 
-def plot_progression(patient_id: int) -> str:
+def plot_progression(patient_id: int, db_path=DB_PATH) -> str:
     """Save a severity-over-time graph for the patient to the reports directory."""
-    if get_patient(patient_id) is None:
+    if get_patient(patient_id, db_path=db_path) is None:
         raise ValueError(f"Patient {patient_id} does not exist.")
 
-    reports = get_reports_for_patient(patient_id)
+    reports = get_reports_for_patient(patient_id, db_path=db_path)
     if not reports:
         raise ValueError(f"No reports found for patient {patient_id}.")
 

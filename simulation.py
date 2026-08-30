@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
+import config
+
 
 def simulate_progression(
     image_path: str,
@@ -68,9 +70,11 @@ def simulate_progression(
     overlay[..., 1] = np.clip(overlay[..., 1] - 30 * probability_map, 0, 255)
     overlay[..., 2] = np.clip(overlay[..., 2] - 20 * probability_map, 0, 255)
 
-    output_dir = Path(__file__).resolve().parent / "reports"
+    # Write a per-image file so simulations for different patients/scans never
+    # overwrite each other, into the documented static/simulations/ directory.
+    output_dir = Path(config.SIMULATION_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "simulated_progression.png"
+    output_path = output_dir / f"{image_file.stem}_simulation.png"
 
     result_image = Image.fromarray(np.uint8(overlay))
     result_image.save(output_path)

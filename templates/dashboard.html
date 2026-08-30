@@ -76,6 +76,12 @@
                 <li class="nav-item"><a class="nav-link" href="/">Upload Scan</a></li>
                 <li class="nav-item"><a class="nav-link active" href="/dashboard">Doctor Dashboard</a></li>
             </ul>
+            {% if session.user_id %}
+            <ul class="navbar-nav ms-auto align-items-center">
+                <li class="nav-item"><span class="navbar-text me-2">{{ session.username }}{% if session.role %} <span class="badge bg-secondary text-uppercase">{{ session.role }}</span>{% endif %}</span></li>
+                <li class="nav-item"><a class="nav-link" href="/logout">Logout</a></li>
+            </ul>
+            {% endif %}
         </div>
     </nav>
 
@@ -185,7 +191,7 @@
                                         {{ dr_classes.get(report.severity, 'Unknown') }}
                                         ({{ report.severity }})
                                     </td>
-                                    <td class="align-middle">{{ "%.1f"|format(report.confidence * 100) }}%</td>
+                                    <td class="align-middle">{% if report.confidence and report.confidence > 0 %}{{ "%.1f"|format(report.confidence * 100) }}%{% else %}<span class="text-muted">N/A</span>{% endif %}</td>
                                     <td class="align-middle">{{ report.recommendation }}</td>
                                     <td class="align-middle">
                                         <a href="/result/{{ report.report_id }}" class="btn btn-sm btn-outline-primary">

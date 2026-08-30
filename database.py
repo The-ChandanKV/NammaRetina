@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import datetime
 import sqlite3
-from datetime import date
 from pathlib import Path
 from typing import Optional
+
+from werkzeug.security import check_password_hash, generate_password_hash
 
 DB_PATH = Path(__file__).resolve().parent / "database.db"
 
@@ -71,12 +73,42 @@ def create_tables(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS Users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'doctor',
+            created_at TEXT
+        )
+        """
+    )
 
 
 def add_patient(name: str, age: int, gender: str, diabetes_history: str, db_path: str | Path = DB_PATH) -> int:
-    """Add a patient to the Patients table and return the new patient_id."""
+    """Return the patient_id for this patient, creating the record only if a
+    matching patient (same name/age/gender, case-insensitive) does not exist.
+
+    Deduping here is what makes multi-visit progression work: re-uploading a scan
+    for the same person reuses their patient_id instead of creating a new patient.
+    """
     conn = get_connection(db_path)
     try:
+        existing = conn.execute(
+            """
+            SELECT patient_id FROM Patients
+            WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+              AND age = ?
+              AND LOWER(TRIM(gender)) = LOWER(TRIM(?))
+            ORDER BY patient_id ASC
+            LIMIT 1
+            """,
+            (name, age, gender),
+        ).fetchone()
+        if existing is not None:
+            return int(existing["patient_id"])
+
         cursor = conn.execute(
             """
             INSERT INTO Patients (name, age, gender, diabetes_history)
@@ -116,7 +148,7 @@ def add_report(
 ) -> int:
     """Add a report to the Reports table and return the new report_id."""
     if date is None:
-        date = date.today().isoformat()
+        date = datetime.date.today().isoformat()
 
     conn = get_connection(db_path)
     try:
@@ -158,7 +190,7 @@ def add_progression_record(
 ) -> int:
     """Store an individual progression status for a patient."""
     if date is None:
-        date = date.today().isoformat()
+        date = datetime.date.today().isoformat()
 
     conn = get_connection(db_path)
     try:
@@ -186,3 +218,58 @@ def get_progression_history(patient_id: int, db_path: str | Path = DB_PATH) -> l
         return list(rows)
     finally:
         conn.close()
+
+
+# ─── User authentication ────────────────────────────────────────────────────
+
+def count_users(db_path: str | Path = DB_PATH) -> int:
+    """Return the number of registered users (used to bootstrap the first admin)."""
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM Users").fetchone()
+        return int(row["n"]) if row else 0
+    finally:
+        conn.close()
+
+
+def get_user_by_username(username: str, db_path: str | Path = DB_PATH) -> Optional[sqlite3.Row]:
+    """Fetch a user row by username, or None if not found."""
+    conn = get_connection(db_path)
+    try:
+        return conn.execute(
+            "SELECT * FROM Users WHERE username = ?", (username.strip(),)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def create_user(username: str, password: str, role: str = "doctor", db_path: str | Path = DB_PATH) -> int:
+    """Create a user with a werkzeug-hashed password and return the new user_id.
+
+    Raises sqlite3.IntegrityError if the username already exists (UNIQUE constraint).
+    """
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO Users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+            (
+                username.strip(),
+                generate_password_hash(password),
+                role,
+                datetime.datetime.now().isoformat(timespec="seconds"),
+            ),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def verify_user(username: str, password: str, db_path: str | Path = DB_PATH) -> Optional[sqlite3.Row]:
+    """Return the user Row if the username exists and the password matches, else None."""
+    user = get_user_by_username(username, db_path=db_path)
+    if user is None:
+        return None
+    if check_password_hash(user["password_hash"], password):
+        return user
+    return None

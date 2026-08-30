@@ -5,20 +5,23 @@ from progression import plot_progression, track_progression
 from simulation import simulate_progression
 from treatment import get_treatment_recommendation
 
+# Use a throwaway database so this test never touches real patient data in
+# database.db. Every DB call below threads TEST_DB through the db_path argument.
+TEST_DB = Path(__file__).resolve().parent / "test_phase6_8.db"
+
 
 def run_phase6_8_tests():
     print("=== Phase 6-8 Test ===\n")
 
-    db_path = Path("database.db")
-    if db_path.exists():
-        db_path.unlink()
+    if TEST_DB.exists():
+        TEST_DB.unlink()
 
     print("1. Initializing database...")
-    init_db()
+    init_db(db_path=TEST_DB)
 
     # Test Patient 1: Single patient with 3 visits showing progression
     print("\n2. Testing Patient 1 with progression tracking...")
-    patient_1_id = add_patient("Test Patient 1", 58, "Male", "Type 2 diabetes for 10 years")
+    patient_1_id = add_patient("Test Patient 1", 58, "Male", "Type 2 diabetes for 10 years", db_path=TEST_DB)
     print(f"Patient 1 ID: {patient_1_id}")
 
     patient_1_visits = [
@@ -38,15 +41,16 @@ def run_phase6_8_tests():
             recommendation="Follow up",
             llm_summary="placeholder",
             date=visit["date"],
+            db_path=TEST_DB,
         )
 
-        result = track_progression(patient_1_id, visit["severity"])
+        result = track_progression(patient_1_id, visit["severity"], visit_date=visit["date"], db_path=TEST_DB)
         patient_1_results.append(result)
 
         # Derive visit number from patient's ordered report history
-        reports = get_reports_for_patient(patient_1_id)
+        reports = get_reports_for_patient(patient_1_id, db_path=TEST_DB)
         visit_number = len(reports)
-        
+
         print(f"Patient {patient_1_id} - Visit {visit_number} - Severity {visit['severity']} - Status: {result['status']}")
 
     expected_statuses = ["Initial", "Stable", "Worsened"]
@@ -56,7 +60,7 @@ def run_phase6_8_tests():
 
     # Test Patient 2: Verify patient histories are isolated
     print("\n3. Testing Patient 2 with independent progression tracking...")
-    patient_2_id = add_patient("Test Patient 2", 42, "Female", "Type 1 diabetes for 5 years")
+    patient_2_id = add_patient("Test Patient 2", 42, "Female", "Type 1 diabetes for 5 years", db_path=TEST_DB)
     print(f"Patient 2 ID: {patient_2_id}")
 
     patient_2_visits = [
@@ -75,15 +79,16 @@ def run_phase6_8_tests():
             recommendation="Follow up",
             llm_summary="placeholder",
             date=visit["date"],
+            db_path=TEST_DB,
         )
 
-        result = track_progression(patient_2_id, visit["severity"])
+        result = track_progression(patient_2_id, visit["severity"], visit_date=visit["date"], db_path=TEST_DB)
         patient_2_results.append(result)
 
         # Derive visit number from patient's ordered report history
-        reports = get_reports_for_patient(patient_2_id)
+        reports = get_reports_for_patient(patient_2_id, db_path=TEST_DB)
         visit_number = len(reports)
-        
+
         print(f"Patient {patient_2_id} - Visit {visit_number} - Severity {visit['severity']} - Status: {result['status']}")
 
     # Patient 2 should show: Initial (no previous), then Worsened (1 -> 3)
@@ -95,25 +100,25 @@ def run_phase6_8_tests():
 
     # Verify Patient 1 is unchanged
     print("\n4. Verifying Patient 1 history not affected by Patient 2...")
-    patient_1_reports = get_reports_for_patient(patient_1_id)
+    patient_1_reports = get_reports_for_patient(patient_1_id, db_path=TEST_DB)
     assert len(patient_1_reports) == 3, f"Patient 1 should have 3 reports, has {len(patient_1_reports)}"
     print(f"✓ Patient 1 has {len(patient_1_reports)} reports (unaffected by Patient 2)")
 
-    patient_2_reports = get_reports_for_patient(patient_2_id)
+    patient_2_reports = get_reports_for_patient(patient_2_id, db_path=TEST_DB)
     assert len(patient_2_reports) == 2, f"Patient 2 should have 2 reports, has {len(patient_2_reports)}"
     print(f"✓ Patient 2 has {len(patient_2_reports)} reports")
 
     print("\n5. Generating progression graphs...")
     print("Generating progression graph for Patient 1...")
-    graph_path_p1 = plot_progression(patient_1_id)
+    graph_path_p1 = plot_progression(patient_1_id, db_path=TEST_DB)
     print(f"Graph saved to: {graph_path_p1}")
     assert Path(graph_path_p1).exists(), "Progression graph for Patient 1 was not created."
 
     print("Generating progression graph for Patient 2...")
-    graph_path_p2 = plot_progression(patient_2_id)
+    graph_path_p2 = plot_progression(patient_2_id, db_path=TEST_DB)
     print(f"Graph saved to: {graph_path_p2}")
     assert Path(graph_path_p2).exists(), "Progression graph for Patient 2 was not created."
-    
+
     # Verify graphs are separate files
     assert graph_path_p1 != graph_path_p2, "Progression graphs should be separate files"
     print("✓ Both progression graphs generated successfully")
@@ -126,14 +131,14 @@ def run_phase6_8_tests():
 
     print("\n6b. Testing patient-specific treatment recommendations:")
     # Get most recent severity for each patient
-    patient_1_reports = get_reports_for_patient(patient_1_id)
+    patient_1_reports = get_reports_for_patient(patient_1_id, db_path=TEST_DB)
     patient_1_current_severity = int(patient_1_reports[-1]["severity"])
     patient_1_recommendation = get_treatment_recommendation(patient_1_current_severity)
     print(f"Patient {patient_1_id}: Severity {patient_1_current_severity} -> {patient_1_recommendation}")
     assert patient_1_current_severity == 2, "Patient 1 current severity should be 2"
     assert patient_1_recommendation == "Ophthalmologist consultation advised", f"Unexpected recommendation for Patient 1: {patient_1_recommendation}"
 
-    patient_2_reports = get_reports_for_patient(patient_2_id)
+    patient_2_reports = get_reports_for_patient(patient_2_id, db_path=TEST_DB)
     patient_2_current_severity = int(patient_2_reports[-1]["severity"])
     patient_2_recommendation = get_treatment_recommendation(patient_2_current_severity)
     print(f"Patient {patient_2_id}: Severity {patient_2_current_severity} -> {patient_2_recommendation}")
@@ -148,13 +153,17 @@ def run_phase6_8_tests():
         output_path = simulate_progression(
             str(sample_image),
             str(sample_heatmap),
-            get_progression_history(patient_1_id),
+            get_progression_history(patient_1_id, db_path=TEST_DB),
             random_seed=7,
         )
         print(f"Simulation output: {output_path}")
         assert Path(output_path).exists(), "Simulation output was not created."
     else:
         print("Simulation skipped: no suitable retinal and Grad-CAM sample images detected.")
+
+    # Clean up the throwaway database so repeated runs start fresh.
+    if TEST_DB.exists():
+        TEST_DB.unlink()
 
     print("\n=== All Phase 6-8 tests passed ===")
 

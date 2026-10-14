@@ -1,0 +1,25 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.DS_Store
+*.db
+APTOS-19/train_images
+APTOS-19/val_images
+APTOS-19/test_images
+processed
+processed.zip
+static/uploads/*
+static/heatmaps/*
+static/reports/*
+static/simulations/*
+!static/uploads/.gitkeep
+!static/heatmaps/.gitkeep
+!static/reports/.gitkeep
+!static/simulations/.gitkeep
+Colab Notebooks
+MAJORR_MAY.pdf
+*.log
+.cursor

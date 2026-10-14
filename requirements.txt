@@ -7,7 +7,7 @@ tensorflow
 keras
 
 # Image Processing
-opencv-python
+opencv-python-headless
 Pillow
 
 # Data Science and Visualization
@@ -23,6 +23,11 @@ tqdm
 # Web Application (Phase 10)
 flask
 python-dotenv
+gunicorn
+werkzeug
+
+# Database / Auth / Storage
+supabase
 
 # PDF Report Generation (Phase 12)
 reportlab

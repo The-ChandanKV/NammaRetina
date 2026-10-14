@@ -839,12 +839,23 @@ def create_app():
     return app
 
 
-if __name__ == "__main__":
+def _bootstrap() -> None:
+    """Connect DB + warm the model. Runs under gunicorn and `python app.py`."""
     init_db()
     logger.info("Supabase database connected.")
+    load_model()
 
-    load_model()  # Pre-load on startup
 
+# Gunicorn imports this module — run bootstrap at import time in production.
+if os.getenv("SKIP_BOOTSTRAP", "").lower() not in {"1", "true", "yes"}:
+    try:
+        _bootstrap()
+    except Exception as exc:
+        # Allow the process to start so health checks / logs can surface the error.
+        logger.error("Bootstrap failed: %s", exc)
+
+
+if __name__ == "__main__":
     logger.info("Starting NammaRetina Flask application...")
     port = int(os.getenv("PORT", 5001))
     logger.info("Serving on http://127.0.0.1:%d", port)

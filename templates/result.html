@@ -1,217 +1,150 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NammaRetina — Diagnostic Result #{{ report.report_id }}</title>
-    <meta name="description" content="Diabetic retinopathy diagnostic result with AI prediction, Grad-CAM heatmap, progression tracking, and treatment recommendation.">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #f4f6f9; }
-        .brand-header {
-            background: linear-gradient(135deg, #1a5276 0%, #2e86c1 100%);
-            color: white;
-            padding: 1.5rem 0;
-        }
-        .brand-header h1 { font-weight: 700; margin-bottom: 0.25rem; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
-        .card-header-custom {
-            background: linear-gradient(135deg, #1a5276, #2e86c1);
-            color: white;
-            border-radius: 12px 12px 0 0 !important;
-            padding: 0.75rem 1.25rem;
-            font-weight: 600;
-        }
-        .severity-badge {
-            display: inline-block;
-            padding: 0.5rem 1.25rem;
-            border-radius: 50px;
-            font-weight: 700;
-            font-size: 1.1rem;
-            color: white;
-        }
-        .severity-0 { background: #27ae60; }
-        .severity-1 { background: #f39c12; }
-        .severity-2 { background: #e67e22; }
-        .severity-3 { background: #e74c3c; }
-        .severity-4 { background: #c0392b; }
-        .btn-primary {
-            background: linear-gradient(135deg, #1a5276, #2e86c1);
-            border: none;
-        }
-        .btn-primary:hover { background: linear-gradient(135deg, #154360, #1a5276); }
-        .result-image { max-width: 100%; border-radius: 8px; border: 1px solid #dee2e6; }
-        .explanation-box {
-            background: #eaf2f8;
-            border-left: 4px solid #2e86c1;
-            padding: 1rem 1.25rem;
-            border-radius: 0 8px 8px 0;
-            font-size: 0.95rem;
-            line-height: 1.6;
-        }
-        footer { color: #7f8c8d; font-size: 0.85rem; }
-    </style>
-</head>
-<body>
-    <!-- Header -->
-    <div class="brand-header text-center">
-        <h1>NammaRetina</h1>
-        <p class="mb-0">AI-Based Diabetic Retinopathy Diagnostic System</p>
+{% extends "base.html" %}
+{% block title %}Report #{{ report.report_id }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="muted" style="margin:0"><a href="{{ url_for('dashboard') }}">Dashboard</a> /
+      <a href="{{ url_for('patient_detail', patient_id=patient.patient_id) }}">{{ patient.name }}</a></p>
+    <h1>Diagnostic report <span class="gradient-text">#{{ report.report_id }}</span></h1>
+  </div>
+  <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+    <a id="btn-rescan" class="btn" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ New scan for patient</a>
+    <a id="btn-xai" class="btn btn-primary" href="{{ url_for('xai_explain', report_id=report.report_id) }}" style="background:linear-gradient(135deg,#7c3aed,#4f46e5)">🔍 Explain AI Decision</a>
+    <form method="POST" action="{{ url_for('regenerate_report', report_id=report.report_id) }}" style="margin:0">
+      <button id="btn-regen" class="btn" type="submit">↻ Regenerate PDF</button></form>
+    {% if pdf_exists %}<a id="btn-pdf" class="btn" href="{{ url_for('download_report', report_id=report.report_id) }}">⬇ Download PDF</a>{% endif %}
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <div>
+    <div class="card hero-result">
+      <span class="sev sev-{{ severity }}">{{ severity_label }} · Stage {{ severity }}/4</span>
+      {% if model_used %}
+      <div class="gauge" style="--pct: {{ confidence_pct }}; --c: var(--sev-{{ severity }})">
+        <div><span>{{ confidence_pct }}%</span><small>confidence</small></div></div>
+      {% else %}
+      <p class="muted" style="margin:1.5rem 0">Confidence N/A (model unavailable)</p>
+      {% endif %}
+      <div class="sev-scale">
+        {% for i in range(5) %}<div class="{{ 'on' if i <= severity }}" style="{{ 'background:var(--sev-%d);color:var(--sev-%d)'|format(i,i) if i <= severity }}"></div>{% endfor %}
+      </div>
+      <p style="margin-top:1rem">Progression: <span class="status status-{{ progression_status }}">{{ progression_status }}</span></p>
+      {% if not model_used %}
+      <div class="flash flash-warning" style="text-align:left">Prediction not performed — no trained model is loaded, so this severity is a placeholder, not an AI reading.</div>
+      {% endif %}
     </div>
 
-    <!-- Navigation -->
-    <nav class="navbar navbar-expand navbar-light bg-white shadow-sm">
-        <div class="container">
-            <ul class="navbar-nav">
-                <li class="nav-item"><a class="nav-link" href="/">Upload Scan</a></li>
-                <li class="nav-item"><a class="nav-link" href="/dashboard">Doctor Dashboard</a></li>
-            </ul>
-            {% if session.user_id %}
-            <ul class="navbar-nav ms-auto align-items-center">
-                <li class="nav-item"><span class="navbar-text me-2">{{ session.username }}{% if session.role %} <span class="badge bg-secondary text-uppercase">{{ session.role }}</span>{% endif %}</span></li>
-                <li class="nav-item"><a class="nav-link" href="/logout">Logout</a></li>
-            </ul>
+    <div class="card"><h3>Patient</h3>
+      <dl class="kv">
+        <dt>Name</dt><dd>{{ patient.name }}</dd>
+        <dt>Age</dt><dd>{{ patient.age }}</dd>
+        <dt>Gender</dt><dd>{{ patient.gender }}</dd>
+        <dt>Diabetes history</dt><dd>{{ patient.diabetes_history }}</dd>
+        <dt>Report date</dt><dd>{{ report.date }}</dd>
+      </dl></div>
+
+    <div class="card"><h3>Treatment recommendation</h3><p style="margin:0">{{ recommendation }}</p></div>
+    <div class="card">
+      <h3>AI Explanation</h3>
+
+      {# Show stored LLM summary only if it's a real explanation (not a stub) #}
+      {% set _bad = ['placeholder', '(pending)', 'pending', '', 'none', 'null'] %}
+      {% if llm_summary and llm_summary.lower().strip() not in _bad %}
+        <div class="explain">{{ llm_summary }}</div>
+      {% else %}
+        {# ── Generalized rule-based explanation rendered directly from template variables ── #}
+        <div class="explain" style="line-height:1.75">
+
+          {# ── Sentence 1: What the scan shows ── #}
+          {% if severity == 0 %}
+            <p>The retinal scan for <strong>{{ patient.name }}</strong> appears <strong>normal</strong> with no detectable signs of diabetic retinopathy. The blood vessels and retinal structures look healthy, and there are no micro-aneurysms, haemorrhages, or exudates identified at this stage.</p>
+          {% elif severity == 1 %}
+            <p>The retinal scan for <strong>{{ patient.name }}</strong> shows <strong>mild diabetic retinopathy</strong> — the earliest clinical stage. Minor vascular changes such as small micro-aneurysms may be present, but vision is typically unaffected at this point.</p>
+          {% elif severity == 2 %}
+            <p>The retinal scan for <strong>{{ patient.name }}</strong> reveals <strong>moderate diabetic retinopathy</strong>. Visible abnormalities in the retinal blood vessels — including dot and blot haemorrhages and possible hard exudates — indicate progressive vascular damage that requires closer monitoring.</p>
+          {% elif severity == 3 %}
+            <p>The retinal scan for <strong>{{ patient.name }}</strong> indicates <strong>severe diabetic retinopathy</strong>. Significant vascular damage is present across multiple retinal quadrants, with a high risk of progression to the vision-threatening proliferative stage if not treated promptly.</p>
+          {% else %}
+            <p>The retinal scan for <strong>{{ patient.name }}</strong> shows <strong>proliferative diabetic retinopathy (PDR)</strong> — the most advanced stage. Abnormal new blood vessel growth (neovascularisation) poses an immediate risk to vision and requires urgent specialist intervention.</p>
+          {% endif %}
+
+          {# ── Sentence 2: Confidence ── #}
+          {% if model_used %}
+            {% if confidence_pct >= 80 %}
+              <p>The AI model produced this classification with a <strong>high confidence of {{ confidence_pct }}%</strong>, indicating a clear and unambiguous pattern consistent with this severity stage.</p>
+            {% elif confidence_pct >= 55 %}
+              <p>The AI model produced this classification with a <strong>moderate confidence of {{ confidence_pct }}%</strong>. This may reflect slight image quality variation or a borderline presentation between adjacent severity stages.</p>
+            {% else %}
+              <p>The AI model's confidence is <strong>{{ confidence_pct }}%</strong>, which is relatively low, suggesting this case sits near the boundary between two severity stages. Additional clinical assessment is particularly important here.</p>
             {% endif %}
+          {% else %}
+            <p>No trained model is currently loaded, so a quantitative confidence score is unavailable. The severity shown is a system placeholder and should not be interpreted as a clinical prediction.</p>
+          {% endif %}
+
+          {# ── Sentence 3: Progression context ── #}
+          {% if progression_status == 'Initial' %}
+            <p>This is the <strong>first scan on record</strong> for this patient, so no comparison with previous visits is available yet. Establishing this baseline is important for tracking future changes.</p>
+          {% elif progression_status == 'Stable' %}
+            <p>Compared with previous scans, the condition appears <strong>stable</strong> with no significant deterioration — an encouraging sign that current management is working.</p>
+          {% elif progression_status == 'Worsened' %}
+            <p>Compared with previous scans, the condition has <strong>worsened</strong>, indicating active disease progression. This change should prompt a reassessment of the patient's glycaemic control and treatment plan.</p>
+          {% elif progression_status == 'Improved' %}
+            <p>Compared with previous scans, the condition shows <strong>improvement</strong> — a positive outcome likely reflecting better blood sugar control or effective treatment response.</p>
+          {% endif %}
+
+          {# ── Sentence 4: Recommendation ── #}
+          <p style="margin-bottom:0">
+            <em style="color:var(--accent)">Clinical note:</em>
+            {% if severity == 0 %}
+              Routine annual screening is recommended. Maintaining good glycaemic, blood pressure, and lipid control remains the best prevention strategy.
+            {% elif severity == 1 %}
+              Follow-up in <strong>6–9 months</strong> is advised. Close monitoring of HbA1c and blood pressure, alongside lifestyle interventions, can prevent progression.
+            {% elif severity == 2 %}
+              An <strong>ophthalmologist consultation</strong> is recommended within 3–6 months. Laser photocoagulation or intravitreal injections may be considered depending on examination findings.
+            {% elif severity == 3 %}
+              <strong>Prompt referral to a retinal specialist</strong> is essential. Pan-retinal photocoagulation (PRP) is often indicated to reduce the risk of progression to PDR.
+            {% else %}
+              <strong>Urgent retinal intervention</strong> is required. Anti-VEGF therapy (e.g. bevacizumab) or vitrectomy may be needed. Immediate specialist review should be arranged without delay.
+            {% endif %}
+            This AI output is a decision-support tool and must be interpreted alongside clinical history, fundoscopy findings, and the judgement of a qualified ophthalmologist.
+          </p>
+
         </div>
-    </nav>
+      {% endif %}
 
-    <div class="container py-4">
-        <!-- Flash Messages -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        {% for category, message in messages %}
-        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-            {{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-        {% endfor %}
-        {% endif %}
-        {% endwith %}
-
-        <h2 class="mb-4" style="color: #1a5276;">Diagnostic Report #{{ report.report_id }}</h2>
-
-        <div class="row">
-            <!-- Left column: Patient + Prediction -->
-            <div class="col-lg-6">
-                <!-- Patient Info -->
-                <div class="card">
-                    <div class="card-header-custom">Patient Information</div>
-                    <div class="card-body">
-                        <table class="table table-borderless mb-0">
-                            <tr><td class="fw-bold" style="width: 40%;">Name</td><td>{{ patient.name }}</td></tr>
-                            <tr><td class="fw-bold">Age</td><td>{{ patient.age }}</td></tr>
-                            <tr><td class="fw-bold">Gender</td><td>{{ patient.gender }}</td></tr>
-                            <tr><td class="fw-bold">Diabetes History</td><td>{{ patient.diabetes_history }}</td></tr>
-                            <tr><td class="fw-bold">Report Date</td><td>{{ report.date }}</td></tr>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Prediction -->
-                <div class="card">
-                    <div class="card-header-custom">Diagnosis Result</div>
-                    <div class="card-body text-center">
-                        <div class="mb-3">
-                            <span class="severity-badge severity-{{ severity }}">
-                                {{ severity_label }} (Stage {{ severity }}/4)
-                            </span>
-                        </div>
-                        {% if model_used %}
-                        <p class="mb-1"><strong>Confidence:</strong> {{ confidence_pct }}%</p>
-                        {% else %}
-                        <p class="mb-1"><strong>Confidence:</strong> <span class="text-muted">N/A (model unavailable)</span></p>
-                        {% endif %}
-                        <p class="mb-0"><strong>Progression:</strong> {{ progression_status }}</p>
-                        {% if not model_used %}
-                        <div class="alert alert-warning mt-3 mb-0 small" role="alert">
-                            Prediction not performed — no trained model is loaded, so this severity
-                            is a placeholder, not an AI reading. Add a trained model to enable diagnosis.
-                        </div>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <!-- Treatment Recommendation -->
-                <div class="card">
-                    <div class="card-header-custom">Treatment Recommendation</div>
-                    <div class="card-body">
-                        <p class="mb-0">{{ recommendation }}</p>
-                    </div>
-                </div>
-
-                <!-- LLM Explanation -->
-                <div class="card">
-                    <div class="card-header-custom">AI-Generated Explanation</div>
-                    <div class="card-body">
-                        <div class="explanation-box">
-                            {{ llm_summary }}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Download -->
-                {% if pdf_exists %}
-                <div class="d-grid mb-4">
-                    <a href="/download/{{ report.report_id }}" class="btn btn-primary btn-lg">
-                        <svg width="20" height="20" fill="currentColor" class="me-2" viewBox="0 0 16 16">
-                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
-                        </svg>
-                        Download PDF Report
-                    </a>
-                </div>
-                {% endif %}
-            </div>
-
-            <!-- Right column: Images -->
-            <div class="col-lg-6">
-                <!-- Uploaded Image -->
-                <div class="card">
-                    <div class="card-header-custom">Uploaded Retinal Image</div>
-                    <div class="card-body text-center">
-                        <img src="{{ image_url }}" alt="Retinal scan" class="result-image">
-                    </div>
-                </div>
-
-                <!-- Grad-CAM Heatmap -->
-                <div class="card">
-                    <div class="card-header-custom">Grad-CAM Heatmap</div>
-                    <div class="card-body text-center">
-                        <img src="{{ heatmap_url }}" alt="Grad-CAM heatmap" class="result-image">
-                        <p class="text-muted mt-2 small">Highlighted regions indicate areas the AI focused on.</p>
-                    </div>
-                </div>
-
-                <!-- Progression Graph -->
-                {% if progression_graph_url %}
-                <div class="card">
-                    <div class="card-header-custom">Progression History</div>
-                    <div class="card-body text-center">
-                        <img src="{{ progression_graph_url }}" alt="Progression graph" class="result-image">
-                    </div>
-                </div>
-                {% endif %}
-
-                <!-- Simulation -->
-                {% if simulation_url %}
-                <div class="card">
-                    <div class="card-header-custom">Disease Spread Simulation</div>
-                    <div class="card-body text-center">
-                        <img src="{{ simulation_url }}" alt="Simulation" class="result-image">
-                        <p class="text-muted mt-2 small">
-                            Probabilistic visualisation — not a clinically validated forecast.
-                        </p>
-                    </div>
-                </div>
-                {% endif %}
-            </div>
-        </div>
+      <div style="margin-top:.9rem;padding:.6rem .85rem;background:rgba(99,102,241,.08);border-left:3px solid #6366f1;border-radius:0 .4rem .4rem 0;font-size:.78rem;color:var(--muted)">
+        🔍 For a full breakdown of <em>why</em> the model made this prediction — including saliency maps, lesion detection, and counterfactual reasoning —
+        <a href="{{ url_for('xai_explain', report_id=report.report_id) }}" style="color:#a78bfa;font-weight:600">open the XAI dashboard →</a>
+      </div>
     </div>
 
-    <footer class="text-center py-3">
-        <p>NammaRetina &mdash; AI-Based Multi-Agent Diabetic Retinopathy Diagnostic System</p>
-    </footer>
+    {% if progression %}
+    <div class="card"><h3>Progression timeline</h3>
+      <ul class="timeline">
+        {% for p in progression %}
+        <li><strong>{{ p.date }}</strong> — <span class="status status-{{ p.status }}">{{ p.status }}</span><br>
+          <span class="muted">{% if p.previous_severity is not none %}{{ dr_classes.get(p.previous_severity) }} → {% endif %}{{ dr_classes.get(p.current_severity) }}</span></li>
+        {% endfor %}
+      </ul></div>
+    {% endif %}
+  </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+  <div>
+    <div class="card"><h3>Scan &amp; Grad-CAM</h3>
+      <div class="compare">
+        <div><div class="img-frame"><img src="{{ image_url }}" alt="Retinal scan"></div><p class="note">Original</p></div>
+        <div><div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap"></div><p class="note">Regions the AI focused on</p></div>
+      </div></div>
+    {% if progression_graph_url %}
+    <div class="card"><h3>Progression history</h3>
+      <div class="img-frame" style="background:#fff"><img src="{{ progression_graph_url }}" alt="Progression graph"></div></div>
+    {% endif %}
+    {% if simulation_url %}
+    <div class="card"><h3>Disease spread simulation</h3>
+      <div class="img-frame"><img src="{{ simulation_url }}" alt="Simulation"></div>
+      <p class="note">Probabilistic visualisation — not a clinically validated forecast.</p></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

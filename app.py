@@ -39,7 +39,17 @@ from database import (
     get_reports_for_patient,
     init_db,
     verify_user,
-    DB_PATH,
+    upload_file,
+    get_signed_url,
+    storage_path_to_signed_url,
+    update_report_llm_summary,
+    BUCKET_IMAGES,
+    BUCKET_HEATMAPS,
+    BUCKET_REPORTS,
+    get_oauth_sign_in_url,
+    exchange_oauth_code,
+    get_user_from_access_token,
+    get_or_create_sso_user,
 )
 from gradcam import generate_gradcam
 from llm_agent import explain_report
@@ -48,6 +58,7 @@ from progression import plot_progression, track_progression
 from report_generator import generate_pdf
 from simulation import simulate_progression
 from treatment import get_treatment_recommendation
+from xai_engine import explain_prediction
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -64,6 +75,7 @@ app = Flask(
 )
 app.secret_key = config.SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_CONTENT_LENGTH
+app.config["TEMPLATES_AUTO_RELOAD"] = True  # always read templates fresh from disk
 
 if config.SECRET_KEY_IS_DEFAULT:
     logger.warning(
@@ -126,20 +138,18 @@ def login_required(view):
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    """Create a new account. The first account created becomes the admin.
-
-    Registration is public so the app can be bootstrapped with zero config. Once
-    the first (admin) account exists, an operator who wants to lock things down
-    can gate this route behind an admin check — anyone who can register can reach
-    patient data.
-    """
+    """Create a new account. The first account created becomes the admin."""
     if request.method == "POST":
         username = request.form.get("username", "").strip()
+        email    = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        confirm = request.form.get("confirm_password", "")
+        confirm  = request.form.get("confirm_password", "")
 
-        if not username or not password:
-            flash("Username and password are required.", "danger")
+        if not username or not email or not password:
+            flash("Username, email and password are required.", "danger")
+            return redirect(url_for("register"))
+        if "@" not in email:
+            flash("Please enter a valid email address.", "danger")
             return redirect(url_for("register"))
         if len(password) < 6:
             flash("Password must be at least 6 characters.", "danger")
@@ -148,15 +158,13 @@ def register():
             flash("Passwords do not match.", "danger")
             return redirect(url_for("register"))
 
-        # First registered user bootstraps the admin role; everyone else is a doctor.
         role = "admin" if count_users() == 0 else "doctor"
         try:
-            user_id = create_user(username, password, role=role)
-        except sqlite3.IntegrityError:
-            flash("That username is already taken.", "danger")
+            user_id = create_user(username, password, email=email, role=role)
+        except Exception as exc:
+            flash(f"Registration failed: {exc}", "danger")
             return redirect(url_for("register"))
 
-        # Log the new user straight in.
         session.clear()
         session["user_id"] = user_id
         session["username"] = username
@@ -169,21 +177,20 @@ def register():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    """Authenticate an existing user."""
+    """Authenticate via Supabase Auth (email + password)."""
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
+        email    = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        user = verify_user(username, password)
+        user = verify_user(email, password)
         if user is None:
-            flash("Invalid username or password.", "danger")
+            flash("Invalid email or password.", "danger")
             return redirect(url_for("login"))
 
         session.clear()
-        session["user_id"] = int(user["user_id"])
+        session["user_id"] = user["user_id"]
         session["username"] = user["username"]
         session["role"] = user["role"]
 
-        # Honour ?next= only for local paths (avoid open-redirect to another host).
         next_url = request.args.get("next") or ""
         if not next_url.startswith("/") or next_url.startswith("//"):
             next_url = url_for("index")
@@ -201,11 +208,101 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/auth/google")
+def auth_google():
+    """Initiate Google OAuth SSO flow via Supabase."""
+    next_url = request.args.get("next") or ""
+    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
+        session["next_url"] = next_url
+
+    callback_url = url_for("auth_callback", _external=True)
+    try:
+        oauth_url, verifier = get_oauth_sign_in_url(redirect_to=callback_url, provider="google")
+        session["oauth_code_verifier"] = verifier
+        return redirect(oauth_url)
+    except Exception as exc:
+        logger.error("Failed to generate Google OAuth URL: %s", exc)
+        flash(f"Could not initiate Google sign in: {exc}", "danger")
+        return redirect(url_for("login"))
+
+
+@app.route("/auth/callback")
+def auth_callback():
+    """OAuth callback endpoint: completes SSO flow and provisions session."""
+    error = request.args.get("error_description") or request.args.get("error")
+    if error:
+        logger.warning("OAuth error returned: %s", error)
+        if "not enabled" in error.lower() or "unsupported provider" in error.lower():
+            flash("Google Sign-In is not enabled yet in your Supabase project. In Supabase Dashboard, go to Authentication → Providers → Google and enable it.", "warning")
+        else:
+            flash(f"Google sign in failed: {error}", "danger")
+        return redirect(url_for("login"))
+
+    code = request.args.get("code")
+    access_token = request.args.get("access_token")
+
+    # If neither query param is present, render helper page to parse client hash fragments (#access_token=...)
+    if not code and not access_token:
+        return render_template("auth_callback.html")
+
+    user = None
+    if code:
+        verifier = session.pop("oauth_code_verifier", None)
+        try:
+            user = exchange_oauth_code(code=code, verifier=verifier)
+        except Exception as exc:
+            logger.error("Failed to exchange OAuth code: %s", exc)
+            flash(f"Authentication failed: {exc}", "danger")
+            return redirect(url_for("login"))
+    elif access_token:
+        try:
+            user = get_user_from_access_token(access_token)
+        except Exception as exc:
+            logger.error("Failed to retrieve user from access token: %s", exc)
+            flash(f"Authentication failed: {exc}", "danger")
+            return redirect(url_for("login"))
+
+    if not user:
+        flash("Could not retrieve your user details from Google.", "danger")
+        return redirect(url_for("login"))
+
+    full_name = None
+    if hasattr(user, "user_metadata") and isinstance(user.user_metadata, dict):
+        full_name = user.user_metadata.get("full_name") or user.user_metadata.get("name")
+
+    try:
+        user_record = get_or_create_sso_user(
+            user_id=str(user.id),
+            email=str(user.email) if user.email else "",
+            full_name=full_name,
+        )
+    except Exception as exc:
+        logger.error("Failed to provision SSO user: %s", exc)
+        flash(f"Account setup failed: {exc}", "danger")
+        return redirect(url_for("login"))
+
+    session.clear()
+    session["user_id"] = user_record["user_id"]
+    session["username"] = user_record["username"]
+    session["role"] = user_record["role"]
+    session["email"] = user_record["email"]
+
+    flash(f"Welcome, {user_record['username']}! Signed in with Google.", "success")
+    next_url = session.pop("next_url", None)
+    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
+        return redirect(next_url)
+    return redirect(url_for("index"))
+
+
 @app.route("/")
 @login_required
 def index():
-    """Home page — upload form with patient details."""
-    return render_template("index.html")
+    """Home page — upload form with patient details (optionally prefilled)."""
+    prefill = None
+    pid = request.args.get("patient_id", type=int)
+    if pid:
+        prefill = get_patient(pid)
+    return render_template("index.html", prefill=prefill)
 
 
 @app.route("/upload", methods=["POST"])
@@ -295,21 +392,26 @@ def upload():
     recommendation = get_treatment_recommendation(severity)
     logger.info("Recommendation: %s", recommendation)
 
-    # --- 7. Save the report to DB first (progression needs it) -------------
-    # Store relative paths for portability in the DB
-    image_rel = os.path.relpath(str(upload_path), config.BASE_DIR)
-    heatmap_rel = os.path.relpath(heatmap_path, config.BASE_DIR)
+    # --- 7. Upload files to Supabase Storage & save report -------------------
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    img_remote = f"uploads/{timestamp}_{upload_filename}"
+    heat_remote = f"heatmaps/{timestamp}_{Path(heatmap_path).name}"
 
-    # We need to save the report BEFORE tracking progression because
-    # track_progression reads the reports table to determine previous severity
+    upload_file(str(upload_path), BUCKET_IMAGES, img_remote)
+    upload_file(heatmap_path, BUCKET_HEATMAPS, heat_remote)
+
+    # Store bucket-prefixed paths so we can later generate signed URLs
+    image_storage  = f"{BUCKET_IMAGES}/{img_remote}"
+    heatmap_storage = f"{BUCKET_HEATMAPS}/{heat_remote}"
+
     report_id = add_report(
         patient_id=patient_id,
-        image_path=image_rel,
+        image_path=image_storage,
         severity=severity,
         confidence=confidence,
-        heatmap_path=heatmap_rel,
+        heatmap_path=heatmap_storage,
         recommendation=recommendation,
-        llm_summary="(pending)",  # Will update after LLM call
+        llm_summary="(pending)",
         date=today_str,
     )
     logger.info("Report saved with ID %d", report_id)
@@ -347,15 +449,7 @@ def upload():
     logger.info("LLM explanation generated (%d chars).", len(llm_summary))
 
     # --- 12. Update the report with the LLM summary ------------------------
-    conn = get_connection()
-    try:
-        conn.execute(
-            "UPDATE Reports SET llm_summary = ? WHERE report_id = ?",
-            (llm_summary, report_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    update_report_llm_summary(report_id, llm_summary)
 
     # --- 13. Generate PDF report -------------------------------------------
     patient_row = get_patient(patient_id)
@@ -381,6 +475,10 @@ def upload():
         output_dir=str(REPORT_DIR),
     )
     logger.info("PDF report generated: %s", pdf_path)
+
+    # Upload PDF to Supabase Storage
+    pdf_remote = f"pdfs/report_{report_id}.pdf"
+    upload_file(pdf_path, BUCKET_REPORTS, pdf_remote)
 
     return redirect(url_for("result", report_id=report_id))
 
@@ -423,11 +521,11 @@ def result(report_id: int):
     severity_label = config.DR_CLASSES.get(severity, "Unknown")
     confidence_pct = round(float(report["confidence"]) * 100, 1)
 
-    # Build paths for images — convert relative DB paths to static-servable paths
-    heatmap_path = report["heatmap_path"]
-    image_path = report["image_path"]
+    # Generate signed URLs from Supabase Storage
+    image_url   = storage_path_to_signed_url(report.get("image_path")) or ""
+    heatmap_url = storage_path_to_signed_url(report.get("heatmap_path")) or ""
 
-    # Check for progression graph
+    # Progression graph — still served locally (generated at runtime)
     progression_graph = Path(config.BASE_DIR) / "reports" / f"progression_{report['patient_id']}.png"
     progression_graph_url = None
     if progression_graph.exists():
@@ -436,22 +534,17 @@ def result(report_id: int):
             filename=f"progression_{report['patient_id']}.png",
         )
 
-    # Check for a per-image simulation, named after the uploaded image's stem
-    # (matches simulation.simulate_progression, which writes to static/simulations/).
+    # Simulation — still served locally
     simulation_url = None
+    image_path = report.get("image_path", "")
     if image_path:
-        sim_filename = f"{Path(str(image_path)).stem}_simulation.png"
+        sim_filename = f"{Path(str(image_path).split('/')[-1]).stem}_simulation.png"
         sim_path = Path(config.SIMULATION_DIR) / sim_filename
         if sim_path.exists():
-            simulation_url = url_for(
-                "serve_file", subdir="simulations", filename=sim_filename
-            )
+            simulation_url = url_for("serve_file", subdir="simulations", filename=sim_filename)
 
-    # Check for PDF
+    # Check for PDF in Supabase Storage or locally
     pdf_exists = (Path(config.REPORT_DIR) / f"report_{report_id}.pdf").exists()
-
-    image_url = db_path_to_url(image_path)
-    heatmap_url = db_path_to_url(heatmap_path)
 
     # A confidence of 0 means no real model ran (see model_loader fallback); the
     # template shows "N/A" rather than a fabricated 0.0% in that case.
@@ -474,6 +567,82 @@ def result(report_id: int):
         simulation_url=simulation_url,
         pdf_exists=pdf_exists,
         model_used=model_used,
+        dr_classes=config.DR_CLASSES,
+    )
+
+
+
+@app.route("/xai/<int:report_id>")
+@login_required
+def xai_explain(report_id: int):
+    """Dedicated Explainable-AI dashboard for a single report.
+    Runs all XAI components locally — no API key required.
+    """
+    conn = get_connection()
+    try:
+        report = conn.execute(
+            "SELECT * FROM Reports WHERE report_id = ?", (report_id,)
+        ).fetchone()
+        if report is None:
+            flash("Report not found.", "danger")
+            return redirect(url_for("dashboard"))
+        patient = conn.execute(
+            "SELECT * FROM Patients WHERE patient_id = ?",
+            (report["patient_id"],),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    # Resolve absolute paths for the XAI engine
+    base = Path(config.BASE_DIR)
+    image_rel = str(report["image_path"]).replace("\\", "/")
+    heatmap_rel = str(report["heatmap_path"]).replace("\\", "/")
+
+    # Try several path resolution strategies (same logic as serve_file)
+    def _resolve(rel):
+        for candidate in [
+            base / rel,
+            Path(config.STATIC_DIR) / Path(rel).name,
+            Path(config.UPLOAD_DIR) / Path(rel).name,
+            Path(config.HEATMAP_DIR) / Path(rel).name,
+        ]:
+            if candidate.exists():
+                return str(candidate)
+        return None
+
+    abs_image = _resolve(image_rel)
+    abs_heatmap = _resolve(heatmap_rel)
+
+    if not abs_image:
+        flash("Original image not found on disk — XAI requires the source image.", "warning")
+        return redirect(url_for("result", report_id=report_id))
+
+    severity = int(report["severity"])
+    confidence = float(report["confidence"])
+
+    # Run all XAI components
+    xai = explain_prediction(
+        image_path=abs_image,
+        heatmap_path=abs_heatmap,
+        severity=severity,
+        confidence=confidence,
+        probabilities=None,
+    )
+
+    image_url = db_path_to_url(report["image_path"])
+    heatmap_url = db_path_to_url(report["heatmap_path"])
+
+    return render_template(
+        "xai.html",
+        report=report,
+        patient=patient,
+        severity=severity,
+        severity_label=config.DR_CLASSES.get(severity, "Unknown"),
+        confidence_pct=round(confidence * 100, 1),
+        image_url=image_url,
+        heatmap_url=heatmap_url,
+        xai=xai,
+        dr_classes=config.DR_CLASSES,
     )
 
 
@@ -515,11 +684,85 @@ def dashboard():
     finally:
         conn.close()
 
+    stats = {
+        "patients": len(patient_data),
+        "reports": sum(len(i["reports"]) for i in patient_data),
+        "high_risk": sum(1 for i in patient_data if (i["latest_severity"] or 0) >= 3),
+        "worsened": sum(1 for i in patient_data if i["latest_status"] == "Worsened"),
+    }
     return render_template(
         "dashboard.html",
         patient_data=patient_data,
         dr_classes=config.DR_CLASSES,
+        stats=stats,
     )
+
+
+@app.route("/patient/<int:patient_id>")
+@login_required
+def patient_detail(patient_id: int):
+    """Per-patient page: trend graph, progression timeline and scan history."""
+    patient = get_patient(patient_id)
+    if patient is None:
+        flash("Patient not found.", "danger")
+        return redirect(url_for("dashboard"))
+    reports = list(reversed(get_reports_for_patient(patient_id)))
+    progression = get_progression_history(patient_id)
+    graph_url = None
+    if progression:
+        try:
+            plot_progression(patient_id)
+        except Exception as exc:
+            logger.warning("Could not plot progression: %s", exc)
+        if (Path(config.BASE_DIR) / "reports" / f"progression_{patient_id}.png").exists():
+            graph_url = url_for("serve_file", subdir="reports", filename=f"progression_{patient_id}.png")
+    return render_template(
+        "patient.html",
+        patient=patient,
+        reports=reports,
+        progression=progression,
+        graph_url=graph_url,
+        dr_classes=config.DR_CLASSES,
+    )
+
+
+@app.route("/report/<int:report_id>/regenerate", methods=["POST"])
+@login_required
+def regenerate_report(report_id: int):
+    """Rebuild the PDF for an existing report."""
+    conn = get_connection()
+    try:
+        report = conn.execute("SELECT * FROM Reports WHERE report_id = ?", (report_id,)).fetchone()
+    finally:
+        conn.close()
+    if report is None:
+        flash("Report not found.", "danger")
+        return redirect(url_for("dashboard"))
+    patient = get_patient(report["patient_id"])
+    severity = int(report["severity"])
+    base = Path(config.BASE_DIR)
+    graph = base / "reports" / f"progression_{report['patient_id']}.png"
+    sim = Path(config.SIMULATION_DIR) / f"{Path(str(report['image_path'])).stem}_simulation.png"
+    try:
+        generate_pdf(
+            report_id=report_id,
+            patient={k: patient[k] for k in ("name", "age", "gender", "diabetes_history")},
+            severity=severity,
+            severity_label=config.DR_CLASSES.get(severity, "Unknown"),
+            confidence=float(report["confidence"]),
+            recommendation=report["recommendation"],
+            llm_summary=report["llm_summary"],
+            heatmap_path=str(base / str(report["heatmap_path"]).replace("\\", "/")),
+            progression_graph_path=str(graph) if graph.exists() else None,
+            simulation_path=str(sim) if sim.exists() else None,
+            report_date=str(report["date"]),
+            output_dir=str(REPORT_DIR),
+        )
+        flash("PDF report regenerated.", "success")
+    except Exception as exc:
+        logger.exception("PDF regeneration failed")
+        flash(f"Could not regenerate PDF: {exc}", "danger")
+    return redirect(url_for("result", report_id=report_id))
 
 
 @app.route("/download/<int:report_id>")
@@ -546,41 +789,45 @@ def download_report(report_id: int):
 @app.route("/files/<subdir>/<filename>")
 @login_required
 def serve_file(subdir: str, filename: str):
-    """Serve uploaded images, heatmaps, and reports from project directories.
-
-    Supports serving from both static/ subdirectories and top-level directories.
-    Returns a clean SVG placeholder image if the file is missing instead of a redirect.
-    """
+    """Serve files — tries Supabase Storage signed URL first, then local fallback."""
+    from flask import Response, redirect as flask_redirect
     safe_filename = secure_filename(filename)
 
-    # 1. Try static directory
-    static_path = Path(config.STATIC_DIR) / subdir / safe_filename
-    if static_path.exists() and static_path.is_file():
-        return send_file(str(static_path))
+    # Supabase Storage bucket mapping
+    bucket_map = {
+        "uploads": BUCKET_IMAGES,
+        "heatmaps": BUCKET_HEATMAPS,
+        "reports": BUCKET_REPORTS,
+        "simulations": BUCKET_REPORTS,
+    }
+    bucket = bucket_map.get(subdir)
+    if bucket:
+        signed = get_signed_url(bucket, f"{subdir}/{safe_filename}")
+        if signed:
+            return flask_redirect(signed)
 
-    # 2. Try top-level project directories (uploads/, heatmaps/, reports/)
-    project_path = Path(config.BASE_DIR) / subdir / safe_filename
-    if project_path.exists() and project_path.is_file():
-        return send_file(str(project_path))
+    # Local fallback (progression graphs, simulations still on disk)
+    for search_dir in [
+        Path(config.STATIC_DIR) / subdir,
+        Path(config.BASE_DIR) / subdir,
+        Path(config.UPLOAD_DIR),
+        Path(config.HEATMAP_DIR),
+        Path(config.REPORT_DIR),
+        Path(config.BASE_DIR) / "reports",
+    ]:
+        p = Path(search_dir) / safe_filename
+        if p.exists() and p.is_file():
+            return send_file(str(p))
 
-    # 3. Try finding by filename in any of the standard image directories
-    for search_dir in [config.UPLOAD_DIR, config.HEATMAP_DIR, config.REPORT_DIR, Path(config.BASE_DIR) / "uploads", Path(config.BASE_DIR) / "heatmaps", Path(config.BASE_DIR) / "reports"]:
-        alt_path = Path(search_dir) / safe_filename
-        if alt_path.exists() and alt_path.is_file():
-            return send_file(str(alt_path))
-
-    # 4. Fallback: return an SVG placeholder image instead of breaking with a 302 redirect
-    logger.warning("File not found: %s/%s — serving SVG placeholder", subdir, filename)
+    # SVG placeholder
+    logger.warning("File not found: %s/%s", subdir, filename)
     label = "Retinal Scan" if "heatmap" not in filename.lower() else "Grad-CAM Heatmap"
-    svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
-        <rect width="300" height="300" fill="#1a365d"/>
-        <circle cx="150" cy="150" r="100" fill="#2a4365" stroke="#4299e1" stroke-width="2"/>
-        <circle cx="150" cy="150" r="40" fill="#3182ce" opacity="0.6"/>
-        <text x="150" y="145" font-family="sans-serif" font-size="14" fill="#ebf8ff" text-anchor="middle" font-weight="bold">{label}</text>
-        <text x="150" y="165" font-family="sans-serif" font-size="11" fill="#90cdf4" text-anchor="middle">Archive Record</text>
-    </svg>'''
-    from flask import Response
-    return Response(svg_content, mimetype="image/svg+xml")
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">'
+           f'<rect width="300" height="300" fill="#1a365d"/>'
+           f'<circle cx="150" cy="150" r="100" fill="#2a4365" stroke="#4299e1" stroke-width="2"/>'
+           f'<text x="150" y="150" font-family="sans-serif" font-size="14" fill="#ebf8ff" '
+           f'text-anchor="middle">{label}</text></svg>')
+    return Response(svg, mimetype="image/svg+xml")
 
 
 # ─── Initialisation ──────────────────────────────────────────────────────────
@@ -594,11 +841,11 @@ def create_app():
 
 if __name__ == "__main__":
     init_db()
-    logger.info("Database initialised at %s", DB_PATH)
+    logger.info("Supabase database connected.")
 
     load_model()  # Pre-load on startup
 
     logger.info("Starting NammaRetina Flask application...")
-    if config.DEBUG:
-        logger.warning("Running with debug=True — do not use this in production.")
-    app.run(debug=config.DEBUG, host="0.0.0.0", port=5000)
+    port = int(os.getenv("PORT", 5001))
+    logger.info("Serving on http://127.0.0.1:%d", port)
+    app.run(debug=config.DEBUG, host="0.0.0.0", port=port)

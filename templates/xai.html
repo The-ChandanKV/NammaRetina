@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+{% block title %}XAI · Report #{{ report.report_id }}{% endblock %}
+{% block content %}
+
+<style>
+/* ─── XAI Page Styles ───────────────────────────────────────────── */
+.xai-hero {
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+  border-radius: 1rem;
+  padding: 2rem 2.4rem;
+  margin-bottom: 1.6rem;
+  position: relative;
+  overflow: hidden;
+}
+.xai-hero::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at 70% 50%, rgba(124,58,237,.25) 0%, transparent 70%);
+  pointer-events: none;
+}
+.xai-hero h1 { margin: 0 0 .4rem; font-size: 1.7rem; }
+.xai-hero p { margin: 0; opacity: .75; font-size: .93rem; }
+.xai-badge {
+  display: inline-flex; align-items: center; gap: .4rem;
+  background: rgba(124,58,237,.25); border: 1px solid rgba(124,58,237,.5);
+  border-radius: 2rem; padding: .3rem .9rem; font-size: .82rem;
+  color: #c4b5fd; margin-bottom: .8rem;
+}
+
+.xai-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+@media (max-width: 840px) { .xai-grid { grid-template-columns: 1fr; } }
+
+.xai-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: .85rem;
+  padding: 1.4rem 1.6rem;
+}
+.xai-card h3 {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  display: flex; align-items: center; gap: .5rem;
+  color: var(--fg);
+}
+.xai-card h3 .icon { font-size: 1.1rem; }
+
+/* Probability bars */
+.prob-row { margin-bottom: .55rem; }
+.prob-label { font-size: .82rem; display: flex; justify-content: space-between; margin-bottom: .2rem; color: var(--muted); }
+.prob-label span:first-child { color: var(--fg); font-weight: 500; }
+.prob-bar { height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
+.prob-fill {
+  height: 100%; border-radius: 5px;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  transition: width .6s ease;
+}
+.prob-fill.predicted { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+
+/* Feature importance bars */
+.fi-row { margin-bottom: .65rem; }
+.fi-label { font-size: .81rem; display: flex; justify-content: space-between; margin-bottom: .22rem; }
+.fi-bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.fi-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, #0ea5e9, #6366f1);
+  transition: width .7s ease;
+}
+
+/* Decomposition bars */
+.dec-row { margin-bottom: .8rem; }
+.dec-header { display: flex; justify-content: space-between; font-size: .84rem; margin-bottom: .18rem; }
+.dec-factor { font-weight: 600; color: var(--fg); }
+.dec-pct { color: #a78bfa; font-weight: 700; }
+.dec-desc { font-size: .77rem; color: var(--muted); margin-bottom: .28rem; }
+.dec-bar { height: 7px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.dec-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, #7c3aed, #db2777);
+}
+
+/* Lesion cards */
+.lesion-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.lesion-item {
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--border);
+  border-radius: .6rem;
+  padding: .8rem 1rem;
+}
+.lesion-item .lesion-name { font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
+.lesion-item .lesion-status {
+  font-size: .95rem; font-weight: 700;
+  display: flex; align-items: center; gap: .35rem;
+}
+.lesion-item .lesion-status.detected { color: #f87171; }
+.lesion-item .lesion-status.not-detected { color: #4ade80; }
+.lesion-conf { font-size: .75rem; color: var(--muted); margin-top: .18rem; }
+
+/* Counterfactuals */
+.cf-list { list-style: none; padding: 0; margin: 0; }
+.cf-list li {
+  padding: .65rem .9rem;
+  border-left: 3px solid #7c3aed;
+  background: rgba(124,58,237,.08);
+  border-radius: 0 .5rem .5rem 0;
+  font-size: .87rem;
+  margin-bottom: .6rem;
+  line-height: 1.5;
+}
+
+/* Image comparison */
+.xai-img-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+.xai-img-wrap { flex: 1; min-width: 140px; }
+.xai-img-wrap img {
+  width: 100%; border-radius: .5rem;
+  border: 1px solid var(--border);
+  display: block;
+}
+.xai-img-caption { font-size: .75rem; color: var(--muted); text-align: center; margin-top: .3rem; }
+
+/* Channel stats table */
+.ch-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.ch-table th { color: var(--muted); font-weight: 500; text-align: left; padding: .3rem .4rem; border-bottom: 1px solid var(--border); }
+.ch-table td { padding: .35rem .4rem; }
+.ch-r { color: #f87171; font-weight: 600; }
+.ch-g { color: #4ade80; font-weight: 600; }
+.ch-b { color: #60a5fa; font-weight: 600; }
+
+/* Narrative */
+.xai-narrative { line-height: 1.75; font-size: .9rem; }
+.xai-narrative p { margin: 0 0 .9rem; }
+.xai-narrative em { color: #a78bfa; font-style: normal; font-weight: 600; }
+
+/* Breadcrumb */
+.xai-breadcrumb { font-size: .84rem; color: var(--muted); margin-bottom: 1.2rem; }
+.xai-breadcrumb a { color: var(--accent); text-decoration: none; }
+.xai-breadcrumb a:hover { text-decoration: underline; }
+
+/* Section divider */
+.xai-section-title {
+  font-size: .7rem; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted);
+  margin: 1.6rem 0 .8rem;
+}
+
+/* Mini gauge */
+.conf-gauge-wrap { display: flex; align-items: center; gap: 1rem; }
+.conf-gauge-arc { position: relative; width: 80px; height: 44px; overflow: hidden; flex-shrink: 0; }
+.conf-gauge-arc svg { position: absolute; top: 0; left: 0; }
+.conf-val { font-size: 1.4rem; font-weight: 800; color: #a78bfa; }
+.conf-label-sm { font-size: .75rem; color: var(--muted); }
+</style>
+
+<div class="xai-breadcrumb">
+  <a href="{{ url_for('dashboard') }}">Dashboard</a> /
+  <a href="{{ url_for('patient_detail', patient_id=patient.patient_id) }}">{{ patient.name }}</a> /
+  <a href="{{ url_for('result', report_id=report.report_id) }}">Report #{{ report.report_id }}</a> /
+  <strong style="color:var(--fg)">XAI Explanation</strong>
+</div>
+
+<!-- Hero -->
+<div class="xai-hero">
+  <div class="xai-badge">🔬 Explainable AI · Zero API Keys · Local Analysis</div>
+  <h1 class="gradient-text">AI Decision Explained</h1>
+  <p>Why did the model classify this retinal scan as <strong>{{ severity_label }}</strong>?
+     This dashboard breaks down every contributing factor — no cloud APIs, no black box.</p>
+</div>
+
+<!-- ── Narrative (full width) ── -->
+<div class="xai-card" style="margin-bottom:1.2rem">
+  <h3><span class="icon">📋</span> AI Reasoning Narrative</h3>
+  <div class="xai-narrative">{{ xai.narrative | safe }}</div>
+</div>
+
+<div class="xai-grid">
+
+  <!-- LEFT column -->
+  <div style="display:flex;flex-direction:column;gap:1.2rem">
+
+    <!-- Prediction probabilities -->
+    <div class="xai-card">
+      <h3><span class="icon">📊</span> Prediction Probabilities</h3>
+      <div class="conf-gauge-wrap" style="margin-bottom:1.2rem">
+        <div>
+          <div class="conf-val">{{ confidence_pct }}%</div>
+          <div class="conf-label-sm">confidence for {{ severity_label }}</div>
+        </div>
+        <div style="flex:1">
+          <div style="height:8px;border-radius:4px;background:var(--border);overflow:hidden">
+            <div style="height:100%;width:{{ confidence_pct }}%;background:linear-gradient(90deg,#f59e0b,#ef4444);border-radius:4px;transition:width .6s"></div>
+          </div>
+        </div>
+      </div>
+      {% for cls in xai.prob_chart %}
+      <div class="prob-row">
+        <div class="prob-label">
+          <span>{{ cls.label }}{% if cls.is_predicted %} ★{% endif %}</span>
+          <span>{{ cls.prob }}%</span>
+        </div>
+        <div class="prob-bar">
+          <div class="prob-fill {{ 'predicted' if cls.is_predicted }}" style="width:{{ cls.prob }}%"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Confidence decomposition -->
+    <div class="xai-card">
+      <h3><span class="icon">⚖️</span> Confidence Decomposition</h3>
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 1rem">How much each clinical factor contributed to the final confidence score.</p>
+      {% for d in xai.decomposition %}
+      <div class="dec-row">
+        <div class="dec-header">
+          <span class="dec-factor">{{ d.factor }}</span>
+          <span class="dec-pct">{{ d.contribution }}%</span>
+        </div>
+        <div class="dec-desc">{{ d.description }}</div>
+        <div class="dec-bar">
+          <div class="dec-fill" style="width:{{ [d.contribution * 1.5, 100] | min }}%"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Counterfactual reasoning -->
+    <div class="xai-card">
+      <h3><span class="icon">🔄</span> Counterfactual Reasoning</h3>
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 .9rem">"What would need to change for a different diagnosis?"</p>
+      <ul class="cf-list">
+        {% for cf in xai.counterfactuals %}
+        <li>{{ cf }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <!-- Feature importance -->
+    <div class="xai-card">
+      <h3><span class="icon">📈</span> Image Feature Importance</h3>
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 1rem">Relative contribution of image-level features derived from colour channel analysis.</p>
+      {% for name, val in xai.channel.feature_importance.items() %}
+      <div class="fi-row">
+        <div class="fi-label">
+          <span>{{ name }}</span>
+          <span style="color:#60a5fa">{{ (val * 100) | round(1) }}%</span>
+        </div>
+        <div class="fi-bar">
+          <div class="fi-fill" style="width:{{ (val * 100) | round(1) }}%"></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+  </div>
+
+  <!-- RIGHT column -->
+  <div style="display:flex;flex-direction:column;gap:1.2rem">
+
+    <!-- Saliency overlay -->
+    <div class="xai-card">
+      <h3><span class="icon">🗺️</span> Superpixel Saliency Map</h3>
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 .9rem">
+        Image partitioned into <strong>{{ xai.saliency.n_segments }}</strong> regions.
+        Red/orange = most influential; blue = less influential.
+        Yellow contours mark the top-{{ xai.saliency.top_regions | length }} decision regions.
+      </p>
+      <div class="xai-img-row">
+        <div class="xai-img-wrap">
+          <img src="{{ image_url }}" alt="Original retinal scan" loading="lazy">
+          <div class="xai-img-caption">Original Scan</div>
+        </div>
+        <div class="xai-img-wrap">
+          {% if xai.saliency.overlay_b64 %}
+          <img src="{{ xai.saliency.overlay_b64 }}" alt="Saliency overlay" loading="lazy">
+          {% else %}
+          <img src="{{ heatmap_url }}" alt="Grad-CAM fallback" loading="lazy">
+          {% endif %}
+          <div class="xai-img-caption">Saliency Regions</div>
+        </div>
+      </div>
+      {% if xai.saliency.top_regions %}
+      <div style="margin-top:.9rem">
+        <div style="font-size:.78rem;color:var(--muted);margin-bottom:.4rem">Top influential regions:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+          {% for r in xai.saliency.top_regions[:5] %}
+          <span style="background:rgba(124,58,237,.18);border:1px solid rgba(124,58,237,.35);border-radius:1rem;padding:.18rem .65rem;font-size:.76rem;color:#c4b5fd">
+            #{{ r.rank }} · {{ r.score }}% activation · {{ r.area_pct }}% area
+          </span>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Lesion detection -->
+    <div class="xai-card">
+      <h3><span class="icon">🔎</span> Lesion & Biomarker Detection</h3>
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 .9rem">Classical computer-vision analysis of DR biomarkers.</p>
+      {% if xai.lesions.annotated_b64 %}
+      <div style="margin-bottom:.9rem">
+        <img src="{{ xai.lesions.annotated_b64 }}" alt="Annotated lesion map" style="width:100%;border-radius:.5rem;border:1px solid var(--border)">
+        <div class="xai-img-caption">Red=Haemorrhages · Cyan=Exudates · Orange=Optic Disc</div>
+      </div>
+      {% endif %}
+      <div class="lesion-grid">
+        <div class="lesion-item">
+          <div class="lesion-name">Micro-aneurysms</div>
+          <div class="lesion-status {{ 'detected' if xai.lesions.microaneurysms.detected else 'not-detected' }}">
+            {{ '⚠ Detected' if xai.lesions.microaneurysms.detected else '✓ Not detected' }}
+          </div>
+          {% if xai.lesions.microaneurysms.detected %}
+          <div class="lesion-conf">~{{ xai.lesions.microaneurysms.count }} found · conf {{ (xai.lesions.microaneurysms.confidence*100)|round }}%</div>
+          {% endif %}
+        </div>
+        <div class="lesion-item">
+          <div class="lesion-name">Haemorrhages</div>
+          <div class="lesion-status {{ 'detected' if xai.lesions.haemorrhages.detected else 'not-detected' }}">
+            {{ '⚠ Detected' if xai.lesions.haemorrhages.detected else '✓ Not detected' }}
+          </div>
+          {% if xai.lesions.haemorrhages.detected %}
+          <div class="lesion-conf">~{{ xai.lesions.haemorrhages.count }} regions · conf {{ (xai.lesions.haemorrhages.confidence*100)|round }}%</div>
+          {% endif %}
+        </div>
+        <div class="lesion-item">
+          <div class="lesion-name">Hard Exudates</div>
+          <div class="lesion-status {{ 'detected' if xai.lesions.exudates.detected else 'not-detected' }}">
+            {{ '⚠ Detected' if xai.lesions.exudates.detected else '✓ Not detected' }}
+          </div>
+          {% if xai.lesions.exudates.detected %}
+          <div class="lesion-conf">~{{ xai.lesions.exudates.count }} clusters · conf {{ (xai.lesions.exudates.confidence*100)|round }}%</div>
+          {% endif %}
+        </div>
+        <div class="lesion-item">
+          <div class="lesion-name">Optic Disc</div>
+          <div class="lesion-status {{ 'detected' if xai.lesions.optic_disc.detected else 'not-detected' }}">
+            {{ '✓ Located' if xai.lesions.optic_disc.detected else '? Not located' }}
+          </div>
+          <div class="lesion-conf">conf {{ (xai.lesions.optic_disc.confidence*100)|round }}%</div>
+        </div>
+        <div class="lesion-item" style="grid-column:1/-1">
+          <div class="lesion-name">Neovascularisation (PDR risk)</div>
+          <div class="lesion-status {{ 'detected' if xai.lesions.neovascularisation.detected else 'not-detected' }}">
+            {{ '⚠ Signs present' if xai.lesions.neovascularisation.detected else '✓ No signs' }}
+          </div>
+          <div class="lesion-conf">vessel complexity score {{ (xai.lesions.neovascularisation.score*100)|round }}%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Colour channel analysis -->
+    <div class="xai-card">
+      <h3><span class="icon">🎨</span> Colour Channel Analysis</h3>
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 .9rem">R/G/B channel statistics — clinically, green channel best reveals retinal vessels; red indicates haemorrhages.</p>
+      <table class="ch-table">
+        <thead>
+          <tr><th>Channel</th><th>Mean</th><th>Std Dev</th><th>Contrast</th><th>Range</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="ch-r">Red</td>
+            <td>{{ xai.channel.r.mean }}</td>
+            <td>{{ xai.channel.r.std }}</td>
+            <td>{{ xai.channel.r.contrast }}</td>
+            <td>{{ xai.channel.r.min }}–{{ xai.channel.r.max }}</td>
+          </tr>
+          <tr>
+            <td class="ch-g">Green</td>
+            <td>{{ xai.channel.g.mean }}</td>
+            <td>{{ xai.channel.g.std }}</td>
+            <td>{{ xai.channel.g.contrast }}</td>
+            <td>{{ xai.channel.g.min }}–{{ xai.channel.g.max }}</td>
+          </tr>
+          <tr>
+            <td class="ch-b">Blue</td>
+            <td>{{ xai.channel.b.mean }}</td>
+            <td>{{ xai.channel.b.std }}</td>
+            <td>{{ xai.channel.b.contrast }}</td>
+            <td>{{ xai.channel.b.min }}–{{ xai.channel.b.max }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:1rem;display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+        <div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:.5rem;padding:.65rem .85rem">
+          <div style="font-size:.75rem;color:var(--muted)">Vessel Contrast</div>
+          <div style="font-size:1.1rem;font-weight:700;color:#4ade80">{{ xai.channel.derived.vessel_contrast }}</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:.5rem;padding:.65rem .85rem">
+          <div style="font-size:.75rem;color:var(--muted)">Haemorrhage Indicator</div>
+          <div style="font-size:1.1rem;font-weight:700;color:#f87171">{{ xai.channel.derived.haemorrhage_indicator }}</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:.5rem;padding:.65rem .85rem">
+          <div style="font-size:.75rem;color:var(--muted)">Exudate Score</div>
+          <div style="font-size:1.1rem;font-weight:700;color:#fbbf24">{{ xai.channel.derived.exudate_score }}</div>
+        </div>
+        <div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:.5rem;padding:.65rem .85rem">
+          <div style="font-size:.75rem;color:var(--muted)">Retinal Darkness</div>
+          <div style="font-size:1.1rem;font-weight:700;color:#60a5fa">{{ xai.channel.derived.darkness_score }}</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Back links -->
+<div style="margin-top:1.6rem;display:flex;gap:.8rem;flex-wrap:wrap">
+  <a class="btn btn-primary" href="{{ url_for('result', report_id=report.report_id) }}" style="background:linear-gradient(135deg,#7c3aed,#4f46e5)">← Back to Report</a>
+  <a class="btn" href="{{ url_for('dashboard') }}">Dashboard</a>
+  {% if pdf_exists is defined and pdf_exists %}
+  <a class="btn" href="{{ url_for('download_report', report_id=report.report_id) }}">⬇ Download PDF</a>
+  {% endif %}
+</div>
+
+<div style="margin-top:1.2rem;padding:.9rem 1.2rem;background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:.6rem;font-size:.8rem;color:#fbbf24;line-height:1.6">
+  ⚠ <strong>Disclaimer:</strong> All XAI analyses on this page are generated locally using classical computer-vision and rule-based algorithms. They are decision-support tools only. Lesion detection is approximate and should not replace ophthalmological examination. The AI model and its explanations must be validated by a qualified clinician before any clinical use.
+</div>
+
+{% endblock %}

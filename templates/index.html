@@ -1,189 +1,78 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NammaRetina — Upload Retinal Scan</title>
-    <meta name="description" content="Upload a retinal image for AI-powered diabetic retinopathy diagnosis, severity grading, and treatment recommendation.">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #f4f6f9; }
-        .brand-header {
-            background: linear-gradient(135deg, #1a5276 0%, #2e86c1 100%);
-            color: white;
-            padding: 1.5rem 0;
-        }
-        .brand-header h1 { font-weight: 700; margin-bottom: 0.25rem; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
-        .btn-primary {
-            background: linear-gradient(135deg, #1a5276, #2e86c1);
-            border: none;
-        }
-        .btn-primary:hover { background: linear-gradient(135deg, #154360, #1a5276); }
-        .upload-area {
-            border: 2px dashed #aab7c4;
-            border-radius: 12px;
-            padding: 2rem;
-            text-align: center;
-            background: #f8f9fa;
-            cursor: pointer;
-            transition: border-color 0.2s;
-        }
-        .upload-area:hover, .upload-area.dragover { border-color: #2e86c1; background: #eaf2f8; }
-        .upload-area img { max-height: 200px; max-width: 100%; margin-top: 1rem; border-radius: 8px; }
-        .form-label { font-weight: 600; color: #1a5276; }
-        footer { color: #7f8c8d; font-size: 0.85rem; }
-    </style>
-</head>
-<body>
-    <!-- Header -->
-    <div class="brand-header text-center">
-        <h1>NammaRetina</h1>
-        <p class="mb-0">AI-Based Diabetic Retinopathy Diagnostic System</p>
+{% extends "base.html" %}
+{% block title %}New Scan{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Retinal <span class="gradient-text">Screening</span></h1>
+    <p class="muted">Upload a fundus photograph for severity grading, Grad-CAM, progression tracking, simulation and a PDF report.</p>
+  </div>
+</div>
+
+<form action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data" id="uploadForm">
+<div class="grid grid-2">
+  <div class="card">
+    <h3>1 · Retinal image</h3>
+    <div class="dropzone" id="uploadArea" tabindex="0">
+      <div id="uploadPlaceholder">
+        <div class="icon">👁️</div>
+        <p style="margin:.5rem 0 0">Click or drag a fundus image here</p>
+        <small class="muted">PNG, JPG, BMP, TIFF — max 16 MB</small>
+      </div>
+      <img id="imagePreview" style="display:none" alt="Selected retinal image preview">
     </div>
+    <input type="file" id="retinalImage" name="retinal_image" accept=".png,.jpg,.jpeg,.bmp,.tiff,.tif" hidden required>
+    <p class="note" id="fileName"></p>
+  </div>
 
-    <!-- Navigation -->
-    <nav class="navbar navbar-expand navbar-light bg-white shadow-sm">
-        <div class="container">
-            <ul class="navbar-nav">
-                <li class="nav-item"><a class="nav-link active" href="/">Upload Scan</a></li>
-                <li class="nav-item"><a class="nav-link" href="/dashboard">Doctor Dashboard</a></li>
-            </ul>
-            {% if session.user_id %}
-            <ul class="navbar-nav ms-auto align-items-center">
-                <li class="nav-item"><span class="navbar-text me-2">{{ session.username }}{% if session.role %} <span class="badge bg-secondary text-uppercase">{{ session.role }}</span>{% endif %}</span></li>
-                <li class="nav-item"><a class="nav-link" href="/logout">Logout</a></li>
-            </ul>
-            {% endif %}
-        </div>
-    </nav>
-
-    <div class="container py-4">
-        <!-- Flash Messages -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        {% for category, message in messages %}
-        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-            {{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
-        {% endfor %}
-        {% endif %}
-        {% endwith %}
-
-        <div class="row justify-content-center">
-            <div class="col-lg-8">
-                <div class="card p-4">
-                    <h2 class="mb-3" style="color: #1a5276;">Upload Retinal Scan</h2>
-                    <p class="text-muted mb-4">
-                        Upload a fundus photograph to receive an AI-powered diagnosis with
-                        severity grading, Grad-CAM heatmap, progression tracking, treatment
-                        recommendation, and a downloadable PDF report.
-                    </p>
-
-                    <form action="/upload" method="POST" enctype="multipart/form-data" id="uploadForm">
-                        <!-- Image Upload -->
-                        <div class="mb-4">
-                            <label class="form-label">Retinal Image</label>
-                            <div class="upload-area" id="uploadArea" onclick="document.getElementById('retinalImage').click()">
-                                <div id="uploadPlaceholder">
-                                    <svg width="48" height="48" fill="#aab7c4" viewBox="0 0 16 16">
-                                        <path d="M.002 3a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-12a2 2 0 0 1-2-2V3zm1 9v1a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12zm5-6.5a1.5 1.5 0 1 0-3 0 1.5 1.5 0 0 0 3 0z"/>
-                                    </svg>
-                                    <p class="mt-2 mb-0 text-muted">Click or drag an image here</p>
-                                    <small class="text-muted">PNG, JPG, BMP, TIFF — max 16 MB</small>
-                                </div>
-                                <img id="imagePreview" style="display: none;" alt="Preview">
-                            </div>
-                            <input type="file" class="d-none" id="retinalImage" name="retinal_image"
-                                   accept=".png,.jpg,.jpeg,.bmp,.tiff,.tif" required>
-                        </div>
-
-                        <hr>
-
-                        <!-- Patient Details -->
-                        <h5 class="mb-3" style="color: #1a5276;">Patient Information</h5>
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="patientName" class="form-label">Full Name *</label>
-                                <input type="text" class="form-control" id="patientName"
-                                       name="patient_name" placeholder="e.g. John Smith" required>
-                            </div>
-                            <div class="col-md-3 mb-3">
-                                <label for="patientAge" class="form-label">Age *</label>
-                                <input type="number" class="form-control" id="patientAge"
-                                       name="patient_age" min="0" max="150" placeholder="e.g. 55" required>
-                            </div>
-                            <div class="col-md-3 mb-3">
-                                <label for="patientGender" class="form-label">Gender *</label>
-                                <select class="form-select" id="patientGender" name="patient_gender" required>
-                                    <option value="" selected disabled>Select</option>
-                                    <option value="Male">Male</option>
-                                    <option value="Female">Female</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="mb-4">
-                            <label for="diabetesHistory" class="form-label">Diabetes History</label>
-                            <textarea class="form-control" id="diabetesHistory" name="diabetes_history"
-                                      rows="2" placeholder="e.g. Type 2 diabetes for 10 years"></textarea>
-                        </div>
-
-                        <button type="submit" class="btn btn-primary btn-lg w-100" id="submitBtn">
-                            Analyse Retinal Scan
-                        </button>
-                    </form>
-                </div>
-            </div>
-        </div>
+  <div class="card">
+    <h3>2 · Patient details</h3>
+    <div class="form-row">
+      <div><label for="patientName">Full name *</label>
+        <input id="patientName" name="patient_name" list="knownPatients" value="{{ prefill.name if prefill }}" placeholder="e.g. Anita Rao" required></div>
+      <div><label for="patientAge">Age *</label>
+        <input id="patientAge" name="patient_age" type="number" min="0" max="150" value="{{ prefill.age if prefill }}" required></div>
+      <div><label for="patientGender">Gender *</label>
+        <select id="patientGender" name="patient_gender" required>
+          <option value="" disabled {{ 'selected' if not prefill }}>Select</option>
+          {% for g in ['Male','Female','Other'] %}
+          <option value="{{ g }}" {{ 'selected' if prefill and prefill.gender == g }}>{{ g }}</option>{% endfor %}
+        </select></div>
     </div>
+    <div class="field"><label for="diabetesHistory">Diabetes history</label>
+      <textarea id="diabetesHistory" name="diabetes_history" rows="3" placeholder="e.g. Type 2 diabetes for 10 years">{{ prefill.diabetes_history if prefill and prefill.diabetes_history != 'Not provided' }}</textarea></div>
+    <p class="note">Re-uploading the same name, age and gender adds a new visit to the existing patient so progression is tracked.</p>
+    <button type="submit" id="submitBtn" class="btn btn-primary btn-lg">Analyse retinal scan</button>
+  </div>
+</div>
+</form>
 
-    <footer class="text-center py-3">
-        <p>NammaRetina &mdash; AI-Based Multi-Agent Diabetic Retinopathy Diagnostic System</p>
-    </footer>
+<div id="overlay"><div class="eye"></div><h2>Analysing scan…</h2><div id="stepText"></div></div>
+{% endblock %}
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Image preview
-        const fileInput = document.getElementById('retinalImage');
-        const preview = document.getElementById('imagePreview');
-        const placeholder = document.getElementById('uploadPlaceholder');
-        const uploadArea = document.getElementById('uploadArea');
+{% block scripts %}
+<script>
+const input = document.getElementById('retinalImage'), area = document.getElementById('uploadArea');
+const prev = document.getElementById('imagePreview'), ph = document.getElementById('uploadPlaceholder');
+area.addEventListener('click', () => input.click());
+area.addEventListener('keydown', e => { if (e.key === 'Enter') input.click(); });
+input.addEventListener('change', () => {
+  const f = input.files[0]; if (!f) return;
+  document.getElementById('fileName').textContent = f.name + ' · ' + (f.size / 1048576).toFixed(2) + ' MB';
+  const r = new FileReader();
+  r.onload = e => { prev.src = e.target.result; prev.style.display = 'block'; ph.style.display = 'none'; };
+  r.readAsDataURL(f);
+});
+['dragover','dragenter'].forEach(ev => area.addEventListener(ev, e => { e.preventDefault(); area.classList.add('dragover'); }));
+['dragleave','drop'].forEach(ev => area.addEventListener(ev, e => { e.preventDefault(); area.classList.remove('dragover'); }));
+area.addEventListener('drop', e => { input.files = e.dataTransfer.files; input.dispatchEvent(new Event('change')); });
 
-        fileInput.addEventListener('change', function() {
-            if (this.files && this.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    preview.src = e.target.result;
-                    preview.style.display = 'block';
-                    placeholder.style.display = 'none';
-                };
-                reader.readAsDataURL(this.files[0]);
-            }
-        });
-
-        // Drag and drop
-        uploadArea.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            this.classList.add('dragover');
-        });
-        uploadArea.addEventListener('dragleave', function() {
-            this.classList.remove('dragover');
-        });
-        uploadArea.addEventListener('drop', function(e) {
-            e.preventDefault();
-            this.classList.remove('dragover');
-            fileInput.files = e.dataTransfer.files;
-            fileInput.dispatchEvent(new Event('change'));
-        });
-
-        // Loading state on submit
-        document.getElementById('uploadForm').addEventListener('submit', function() {
-            const btn = document.getElementById('submitBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Analysing...';
-        });
-    </script>
-</body>
-</html>
+const steps = ['Preprocessing image…','Running severity model…','Generating Grad-CAM heatmap…','Tracking progression…','Simulating disease spread…','Writing clinical explanation…','Building PDF report…'];
+document.getElementById('uploadForm').addEventListener('submit', () => {
+  document.getElementById('submitBtn').disabled = true;
+  document.getElementById('overlay').classList.add('show');
+  let i = 0; const t = document.getElementById('stepText');
+  t.textContent = steps[0];
+  setInterval(() => { i = Math.min(i + 1, steps.length - 1); t.textContent = steps[i]; }, 2500);
+});
+</script>
+{% endblock %}

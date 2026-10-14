@@ -108,6 +108,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 LLM_MODEL = "gemini-1.5-flash"
 
 # =============================================================================
+# Supabase Configuration
+# =============================================================================
+SUPABASE_URL         = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY         = os.getenv("SUPABASE_KEY", "")          # anon/public
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")  # server-side only
+
+# =============================================================================
 # Grad-CAM Configuration
 # =============================================================================
 GRADCAM_LAYER_NAME = "top_conv"  # EfficientNetB0 last conv layer

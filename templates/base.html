@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}NammaRetina{% endblock %} · NammaRetina</title>
+    <meta name="description" content="{% block description %}AI-powered diabetic retinopathy screening, Grad-CAM explainability, progression tracking and PDF reports.{% endblock %}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+{% if session.user_id %}
+<header class="nav">
+    <div class="container">
+        <a class="brand" href="{{ url_for('index') }}"><span class="logo"></span>NammaRetina</a>
+        <nav class="nav-links" aria-label="Main">
+            <a id="nav-upload" href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint == 'index' }}">New Scan</a>
+            <a id="nav-dashboard" href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint in ('dashboard', 'patient_detail') }}">Dashboard</a>
+        </nav>
+        <div class="nav-user">
+            <span>{{ session.username }}</span><span class="chip">{{ session.role }}</span>
+            <a id="nav-logout" class="btn btn-sm" href="{{ url_for('logout') }}">Logout</a>
+        </div>
+    </div>
+</header>
+{% endif %}
+<main class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}" role="alert"><span>{{ message }}</span>
+        <button type="button" aria-label="Dismiss" onclick="this.parentElement.remove()">&times;</button></div>
+    {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+</main>
+<footer>NammaRetina — AI-Based Multi-Agent Diabetic Retinopathy Diagnostic System. Decision support only; not a substitute for clinical judgement.</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

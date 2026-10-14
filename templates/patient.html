@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ patient.name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="muted" style="margin:0"><a href="{{ url_for('dashboard') }}">Dashboard</a> / Patient #{{ patient.patient_id }}</p>
+    <h1>{{ patient.name }}</h1>
+    <p class="muted">{{ patient.age }} yrs · {{ patient.gender }} · {{ patient.diabetes_history }}</p>
+  </div>
+  <a id="btn-add-scan" class="btn btn-primary" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ Add follow-up scan</a>
+</div>
+
+<div class="grid grid-2">
+  <div class="card"><h3>Severity trend</h3>
+    {% if graph_url %}<div class="img-frame" style="background:#fff"><img src="{{ graph_url }}" alt="Progression graph"></div>
+    {% else %}<p class="muted">Not enough data for a trend yet.</p>{% endif %}
+  </div>
+  <div class="card"><h3>Progression timeline</h3>
+    {% if progression %}<ul class="timeline">
+      {% for p in progression|reverse %}
+      <li><strong>{{ p.date }}</strong> — <span class="status status-{{ p.status }}">{{ p.status }}</span><br>
+        <span class="muted">{% if p.previous_severity is not none %}{{ dr_classes.get(p.previous_severity) }} → {% endif %}{{ dr_classes.get(p.current_severity) }}</span></li>
+      {% endfor %}</ul>
+    {% else %}<p class="muted">No progression records.</p>{% endif %}
+  </div>
+</div>
+
+<div class="card"><h3>Scan history</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Report</th><th>Date</th><th>Scan</th><th>Grad-CAM</th><th>Severity</th><th>Confidence</th><th>Recommendation</th><th></th></tr></thead>
+    <tbody>
+    {% for r in reports %}
+    <tr>
+      <td>#{{ r.report_id }}</td><td>{{ r.date }}</td>
+      <td><a href="{{ url_for('result', report_id=r.report_id) }}"><img class="thumb" src="{{ r.image_path|file_url }}" alt="Scan"></a></td>
+      <td><a href="{{ url_for('result', report_id=r.report_id) }}"><img class="thumb" src="{{ r.heatmap_path|file_url }}" alt="Heatmap"></a></td>
+      <td><span class="sev sev-{{ r.severity }}">{{ dr_classes.get(r.severity, 'Unknown') }}</span></td>
+      <td>{% if r.confidence and r.confidence > 0 %}{{ '%.1f'|format(r.confidence * 100) }}%{% else %}<span class="muted">N/A</span>{% endif %}</td>
+      <td style="max-width:300px">{{ r.recommendation }}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <a class="btn btn-sm" href="{{ url_for('result', report_id=r.report_id) }}">View</a>
+        <a class="btn btn-sm" href="{{ url_for('download_report', report_id=r.report_id) }}">PDF</a></td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="empty">No scans recorded.</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+</div>
+{% endblock %}

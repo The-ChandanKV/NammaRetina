@@ -336,151 +336,158 @@ def upload():
         return redirect(url_for("index"))
 
     today_str = datetime.now().strftime("%Y-%m-%d")
+    upload_path: Path | None = None
 
-    # --- 2. Save uploaded image --------------------------------------------
-    safe_name = secure_filename(file.filename)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    upload_filename = f"{timestamp}_{safe_name}"
-    upload_path = UPLOAD_DIR / upload_filename
-    file.save(str(upload_path))
-    logger.info("Image saved: %s", upload_path)
-
-    # Confirm the upload is a genuine, decodable image — the extension alone is
-    # not enough (a renamed .txt would otherwise crash the pipeline downstream).
     try:
-        with Image.open(upload_path) as im:
-            im.verify()
-    except Exception:
+        # --- 2. Save uploaded image ----------------------------------------
+        safe_name = secure_filename(file.filename)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        upload_filename = f"{timestamp}_{safe_name}"
+        upload_path = UPLOAD_DIR / upload_filename
+        file.save(str(upload_path))
+        logger.info("Image saved: %s", upload_path)
+
+        # Confirm the upload is a genuine, decodable image — the extension alone
+        # is not enough (a renamed .txt would otherwise crash the pipeline).
         try:
-            upload_path.unlink()
-        except OSError:
-            pass
-        flash("The uploaded file is not a valid image.", "danger")
+            with Image.open(upload_path) as im:
+                im.verify()
+        except Exception:
+            try:
+                upload_path.unlink()
+            except OSError:
+                pass
+            flash("The uploaded file is not a valid image.", "danger")
+            return redirect(url_for("index"))
+
+        # --- 3. Create or find patient -------------------------------------
+        patient_id = add_patient(
+            name=name,
+            age=age,
+            gender=gender,
+            diabetes_history=diabetes_history if diabetes_history else "Not provided",
+        )
+        logger.info("Patient created/found with ID %d", patient_id)
+
+        # --- 4. Model prediction -------------------------------------------
+        prediction = predict_severity(str(upload_path))
+        severity = prediction["severity"]
+        confidence = prediction["confidence"]
+        severity_label = prediction["severity_label"]
+        model_used = prediction["model_used"]
+        logger.info(
+            "Prediction: %s (severity=%d, confidence=%.3f, model_used=%s)",
+            severity_label, severity, confidence, model_used,
+        )
+
+        # --- 5. Grad-CAM heatmap -------------------------------------------
+        model = load_model()
+        heatmap_path = generate_gradcam(
+            model=model,
+            image_path=str(upload_path),
+            predicted_class=severity,
+            save_dir=str(HEATMAP_DIR),
+        )
+        logger.info("Heatmap saved: %s", heatmap_path)
+
+        # --- 6. Treatment recommendation -----------------------------------
+        recommendation = get_treatment_recommendation(severity)
+        logger.info("Recommendation: %s", recommendation)
+
+        # --- 7. Upload files to Supabase Storage & save report -------------
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        img_remote = f"uploads/{timestamp}_{upload_filename}"
+        heat_remote = f"heatmaps/{timestamp}_{Path(heatmap_path).name}"
+
+        upload_file(str(upload_path), BUCKET_IMAGES, img_remote)
+        upload_file(heatmap_path, BUCKET_HEATMAPS, heat_remote)
+
+        # Store bucket-prefixed paths so we can later generate signed URLs
+        image_storage = f"{BUCKET_IMAGES}/{img_remote}"
+        heatmap_storage = f"{BUCKET_HEATMAPS}/{heat_remote}"
+
+        report_id = add_report(
+            patient_id=patient_id,
+            image_path=image_storage,
+            severity=severity,
+            confidence=confidence,
+            heatmap_path=heatmap_storage,
+            recommendation=recommendation,
+            llm_summary="(pending)",
+            date=today_str,
+        )
+        logger.info("Report saved with ID %d", report_id)
+
+        # --- 8. Progression tracking ---------------------------------------
+        progression_result = track_progression(patient_id, severity, visit_date=today_str)
+        progression_status = progression_result["status"]
+        logger.info("Progression status: %s", progression_status)
+
+        # --- 9. Progression graph ------------------------------------------
+        progression_graph_path = None
+        try:
+            progression_graph_path = plot_progression(patient_id)
+            logger.info("Progression graph: %s", progression_graph_path)
+        except ValueError as exc:
+            logger.warning("Could not plot progression: %s", exc)
+
+        # --- 10. Simulation (only if progression history exists) ------------
+        simulation_path = None
+        history = get_progression_history(patient_id)
+        if history and len(history) > 0:
+            try:
+                sim_result = simulate_progression(
+                    image_path=str(upload_path),
+                    gradcam_path=heatmap_path,
+                    progression_history=[dict(row) for row in history],
+                )
+                simulation_path = sim_result
+                logger.info("Simulation saved: %s", simulation_path)
+            except Exception as exc:
+                logger.warning("Simulation failed: %s", exc)
+
+        # --- 11. LLM explanation -------------------------------------------
+        llm_summary = explain_report(severity, confidence, progression_status)
+        logger.info("LLM explanation generated (%d chars).", len(llm_summary))
+
+        # --- 12. Update the report with the LLM summary --------------------
+        update_report_llm_summary(report_id, llm_summary)
+
+        # --- 13. Generate PDF report ---------------------------------------
+        patient_row = get_patient(patient_id)
+        patient_dict = {
+            "name": patient_row["name"],
+            "age": patient_row["age"],
+            "gender": patient_row["gender"],
+            "diabetes_history": patient_row["diabetes_history"],
+        }
+
+        pdf_path = generate_pdf(
+            report_id=report_id,
+            patient=patient_dict,
+            severity=severity,
+            severity_label=severity_label,
+            confidence=confidence,
+            recommendation=recommendation,
+            llm_summary=llm_summary,
+            heatmap_path=heatmap_path,
+            progression_graph_path=progression_graph_path,
+            simulation_path=simulation_path,
+            report_date=today_str,
+            output_dir=str(REPORT_DIR),
+        )
+        logger.info("PDF report generated: %s", pdf_path)
+
+        # Upload PDF to Supabase Storage
+        pdf_remote = f"pdfs/report_{report_id}.pdf"
+        upload_file(pdf_path, BUCKET_REPORTS, pdf_remote)
+
+        return redirect(url_for("result", report_id=report_id))
+
+    except Exception as exc:
+        logger.exception("Upload pipeline failed: %s", exc)
+        flash(f"Analysis failed: {exc}", "danger")
         return redirect(url_for("index"))
-
-    # --- 3. Create or find patient -----------------------------------------
-    patient_id = add_patient(
-        name=name,
-        age=age,
-        gender=gender,
-        diabetes_history=diabetes_history if diabetes_history else "Not provided",
-    )
-    logger.info("Patient created/found with ID %d", patient_id)
-
-    # --- 4. Model prediction -----------------------------------------------
-    prediction = predict_severity(str(upload_path))
-    severity = prediction["severity"]
-    confidence = prediction["confidence"]
-    severity_label = prediction["severity_label"]
-    model_used = prediction["model_used"]
-    logger.info(
-        "Prediction: %s (severity=%d, confidence=%.3f, model_used=%s)",
-        severity_label, severity, confidence, model_used,
-    )
-
-    # --- 5. Grad-CAM heatmap -----------------------------------------------
-    model = load_model()
-    heatmap_path = generate_gradcam(
-        model=model,
-        image_path=str(upload_path),
-        predicted_class=severity,
-        save_dir=str(HEATMAP_DIR),
-    )
-    logger.info("Heatmap saved: %s", heatmap_path)
-
-    # --- 6. Treatment recommendation ---------------------------------------
-    recommendation = get_treatment_recommendation(severity)
-    logger.info("Recommendation: %s", recommendation)
-
-    # --- 7. Upload files to Supabase Storage & save report -------------------
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    img_remote = f"uploads/{timestamp}_{upload_filename}"
-    heat_remote = f"heatmaps/{timestamp}_{Path(heatmap_path).name}"
-
-    upload_file(str(upload_path), BUCKET_IMAGES, img_remote)
-    upload_file(heatmap_path, BUCKET_HEATMAPS, heat_remote)
-
-    # Store bucket-prefixed paths so we can later generate signed URLs
-    image_storage  = f"{BUCKET_IMAGES}/{img_remote}"
-    heatmap_storage = f"{BUCKET_HEATMAPS}/{heat_remote}"
-
-    report_id = add_report(
-        patient_id=patient_id,
-        image_path=image_storage,
-        severity=severity,
-        confidence=confidence,
-        heatmap_path=heatmap_storage,
-        recommendation=recommendation,
-        llm_summary="(pending)",
-        date=today_str,
-    )
-    logger.info("Report saved with ID %d", report_id)
-
-    # --- 8. Progression tracking -------------------------------------------
-    progression_result = track_progression(patient_id, severity, visit_date=today_str)
-    progression_status = progression_result["status"]
-    logger.info("Progression status: %s", progression_status)
-
-    # --- 9. Progression graph ----------------------------------------------
-    progression_graph_path = None
-    try:
-        progression_graph_path = plot_progression(patient_id)
-        logger.info("Progression graph: %s", progression_graph_path)
-    except ValueError as exc:
-        logger.warning("Could not plot progression: %s", exc)
-
-    # --- 10. Simulation (only if progression history exists) ----------------
-    simulation_path = None
-    history = get_progression_history(patient_id)
-    if history and len(history) > 0:
-        try:
-            sim_result = simulate_progression(
-                image_path=str(upload_path),
-                gradcam_path=heatmap_path,
-                progression_history=[dict(row) for row in history],
-            )
-            simulation_path = sim_result
-            logger.info("Simulation saved: %s", simulation_path)
-        except Exception as exc:
-            logger.warning("Simulation failed: %s", exc)
-
-    # --- 11. LLM explanation -----------------------------------------------
-    llm_summary = explain_report(severity, confidence, progression_status)
-    logger.info("LLM explanation generated (%d chars).", len(llm_summary))
-
-    # --- 12. Update the report with the LLM summary ------------------------
-    update_report_llm_summary(report_id, llm_summary)
-
-    # --- 13. Generate PDF report -------------------------------------------
-    patient_row = get_patient(patient_id)
-    patient_dict = {
-        "name": patient_row["name"],
-        "age": patient_row["age"],
-        "gender": patient_row["gender"],
-        "diabetes_history": patient_row["diabetes_history"],
-    }
-
-    pdf_path = generate_pdf(
-        report_id=report_id,
-        patient=patient_dict,
-        severity=severity,
-        severity_label=severity_label,
-        confidence=confidence,
-        recommendation=recommendation,
-        llm_summary=llm_summary,
-        heatmap_path=heatmap_path,
-        progression_graph_path=progression_graph_path,
-        simulation_path=simulation_path,
-        report_date=today_str,
-        output_dir=str(REPORT_DIR),
-    )
-    logger.info("PDF report generated: %s", pdf_path)
-
-    # Upload PDF to Supabase Storage
-    pdf_remote = f"pdfs/report_{report_id}.pdf"
-    upload_file(pdf_path, BUCKET_REPORTS, pdf_remote)
-
-    return redirect(url_for("result", report_id=report_id))
 
 
 @app.route("/result/<int:report_id>")

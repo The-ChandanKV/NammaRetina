@@ -56,6 +56,45 @@ def get_connection():
     return _get_sb()
 
 
+def _next_id(table: str, id_col: str) -> int:
+    """Return max(id)+1. Used when Postgres sequences are out of sync after migration."""
+    sb = _get_sb()
+    result = (
+        sb.table(table)
+        .select(id_col)
+        .order(id_col, desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return 1
+    return int(result.data[0][id_col]) + 1
+
+
+def _is_duplicate_key(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "23505" in text or "duplicate key" in text
+
+
+def _insert_with_id_fallback(table: str, id_col: str, payload: dict) -> dict:
+    """Insert a row; on sequence/pkey clash, retry with an explicit next id."""
+    sb = _get_sb()
+    try:
+        result = sb.table(table).insert(payload).execute()
+        return result.data[0]
+    except Exception as exc:
+        if not _is_duplicate_key(exc):
+            raise
+        payload = dict(payload)
+        payload[id_col] = _next_id(table, id_col)
+        logger.warning(
+            "Sequence for %s.%s looks stale; retrying insert with %s=%s",
+            table, id_col, id_col, payload[id_col],
+        )
+        result = sb.table(table).insert(payload).execute()
+        return result.data[0]
+
+
 def init_db(*args, **kwargs) -> str:
     """Verify Supabase connectivity on startup. Tables are created via the SQL Editor."""
     try:
@@ -91,19 +130,17 @@ def add_patient(
     if existing.data:
         return int(existing.data[0]["patient_id"])
 
-    result = (
-        sb.table("patients")
-        .insert(
-            {
-                "name": name.strip(),
-                "age": age,
-                "gender": gender.strip(),
-                "diabetes_history": diabetes_history,
-            }
-        )
-        .execute()
+    row = _insert_with_id_fallback(
+        "patients",
+        "patient_id",
+        {
+            "name": name.strip(),
+            "age": age,
+            "gender": gender.strip(),
+            "diabetes_history": diabetes_history,
+        },
     )
-    return int(result.data[0]["patient_id"])
+    return int(row["patient_id"])
 
 
 def get_patient(patient_id: int, db_path=None) -> Optional[dict]:
@@ -136,24 +173,21 @@ def add_report(
     if date is None:
         date = datetime.date.today().isoformat()
 
-    sb = _get_sb()
-    result = (
-        sb.table("reports")
-        .insert(
-            {
-                "patient_id": patient_id,
-                "image_path": image_path,
-                "severity": severity,
-                "confidence": confidence,
-                "heatmap_path": heatmap_path,
-                "recommendation": recommendation,
-                "llm_summary": llm_summary,
-                "date": date,
-            }
-        )
-        .execute()
+    row = _insert_with_id_fallback(
+        "reports",
+        "report_id",
+        {
+            "patient_id": patient_id,
+            "image_path": image_path,
+            "severity": severity,
+            "confidence": confidence,
+            "heatmap_path": heatmap_path,
+            "recommendation": recommendation,
+            "llm_summary": llm_summary,
+            "date": date,
+        },
     )
-    return int(result.data[0]["report_id"])
+    return int(row["report_id"])
 
 
 def get_report(report_id: int) -> Optional[dict]:
@@ -215,21 +249,18 @@ def add_progression_record(
     if date is None:
         date = datetime.date.today().isoformat()
 
-    sb = _get_sb()
-    result = (
-        sb.table("progression")
-        .insert(
-            {
-                "patient_id": patient_id,
-                "previous_severity": previous_severity,
-                "current_severity": current_severity,
-                "status": status,
-                "date": date,
-            }
-        )
-        .execute()
+    row = _insert_with_id_fallback(
+        "progression",
+        "progression_id",
+        {
+            "patient_id": patient_id,
+            "previous_severity": previous_severity,
+            "current_severity": current_severity,
+            "status": status,
+            "date": date,
+        },
     )
-    return int(result.data[0]["progression_id"])
+    return int(row["progression_id"])
 
 
 def get_progression_history(patient_id: int, db_path=None) -> list[dict]:

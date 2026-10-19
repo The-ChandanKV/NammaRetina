@@ -26,4 +26,5 @@ RUN mkdir -p models static/uploads static/heatmaps static/reports static/simulat
 
 EXPOSE 8080
 
-CMD gunicorn --bind 0.0.0.0:${PORT} --workers 1 --threads 2 --timeout 120 app:app
+# Longer timeout: first boot may download MODEL_URL + load TensorFlow
+CMD gunicorn --bind 0.0.0.0:${PORT} --workers 1 --threads 2 --timeout 180 --graceful-timeout 30 app:app

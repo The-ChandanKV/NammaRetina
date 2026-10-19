@@ -5,6 +5,7 @@
 # Deep Learning
 tensorflow
 keras
+gdown
 
 # Image Processing
 opencv-python-headless

@@ -41,6 +41,8 @@ NUM_CLASSES = 5
 LEARNING_RATE = 1e-4
 MODEL_NAME = "efficientnetb0_dr.keras"
 MODEL_PATH = os.path.join(MODEL_DIR, MODEL_NAME)
+# Optional: download weights at boot (Google Drive uc?id=… or any direct HTTPS URL)
+MODEL_URL = os.getenv("MODEL_URL", "").strip()
 
 # DR Severity Labels
 DR_CLASSES = {

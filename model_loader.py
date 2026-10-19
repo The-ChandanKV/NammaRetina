@@ -1,24 +1,80 @@
 """
 NammaRetina - Model Loader
 Loads the trained EfficientNetB0 model for DR severity prediction.
-Provides a graceful fallback when the model file is not available.
+Optionally downloads weights from MODEL_URL when the local file is missing.
 """
 
 from __future__ import annotations
 
-import os
 import logging
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import cv2
 import numpy as np
 
-from config import MODEL_PATH, IMG_SIZE, NUM_CLASSES, DR_CLASSES
+from config import MODEL_PATH, MODEL_URL, IMG_SIZE, NUM_CLASSES, DR_CLASSES
 
 logger = logging.getLogger(__name__)
 
 _model = None
 _model_available = None
+
+
+def _drive_file_id(url: str) -> str | None:
+    """Extract a Google Drive file id from common share / uc URL forms."""
+    if not url:
+        return None
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "id" in qs and qs["id"]:
+        return qs["id"][0]
+    # https://drive.google.com/file/d/<ID>/view
+    parts = parsed.path.strip("/").split("/")
+    if "d" in parts:
+        i = parts.index("d")
+        if i + 1 < len(parts):
+            return parts[i + 1]
+    return None
+
+
+def ensure_model_file(dest: str | Path | None = None) -> Path:
+    """Return path to the model file, downloading from MODEL_URL if needed."""
+    path = Path(dest or MODEL_PATH)
+    if path.exists() and path.stat().st_size > 0:
+        return path
+
+    url = MODEL_URL
+    if not url:
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Model missing at %s — downloading from MODEL_URL…", path)
+
+    try:
+        file_id = _drive_file_id(url)
+        if file_id:
+            import gdown
+
+            gdown.download(id=file_id, output=str(path), quiet=False)
+        else:
+            import urllib.request
+
+            urllib.request.urlretrieve(url, str(path))
+    except Exception as exc:
+        logger.error("Failed to download model from MODEL_URL: %s", exc)
+        if path.exists() and path.stat().st_size == 0:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        return path
+
+    if path.exists() and path.stat().st_size > 0:
+        logger.info("Model downloaded (%d bytes) → %s", path.stat().st_size, path)
+    else:
+        logger.error("Download finished but model file is missing/empty: %s", path)
+    return path
 
 
 def load_model():
@@ -28,10 +84,12 @@ def load_model():
     if _model_available is not None:
         return _model
 
-    model_file = Path(MODEL_PATH)
-    if not model_file.exists():
+    model_file = ensure_model_file(MODEL_PATH)
+    if not model_file.exists() or model_file.stat().st_size == 0:
         logger.warning(
-            "Trained model not found at %s. Using fallback predictions.", MODEL_PATH
+            "Trained model not found at %s. Using fallback predictions. "
+            "Train with train_improved_dr_model.ipynb and set MODEL_URL.",
+            MODEL_PATH,
         )
         _model_available = False
         _model = None
@@ -62,9 +120,7 @@ def preprocess_image(image_path: str) -> np.ndarray:
     """Read and preprocess an image for model inference.
 
     Returns a (1, IMG_SIZE, IMG_SIZE, 3) float32 array normalised to [-1, 1],
-    matching the training pipeline (img / 127.5 - 1.0) in the Colab notebook.
-    Keeping train/serve normalization identical is what makes the model's
-    predictions valid at inference time.
+    matching the improved Colab training pipeline (img / 127.5 - 1.0).
     """
     img = cv2.imread(image_path)
     if img is None:
@@ -101,11 +157,6 @@ def predict_severity(image_path: str) -> dict:
             "model_used": True,
         }
 
-    # --- Fallback: no trained model available ---
-    # Return a neutral result instead of a fabricated (pseudo-random) severity.
-    # confidence == 0.0 and model_used == False signal to the UI and PDF that no
-    # real prediction was performed, so a missing model can never masquerade as
-    # a genuine "Severe"/"Proliferative" diagnosis.
     logger.warning("No trained model available — returning neutral fallback (no prediction).")
     return {
         "severity": 0,

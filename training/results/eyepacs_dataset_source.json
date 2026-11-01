@@ -1,0 +1,6 @@
+{
+  "source": "https://www.kaggle.com/datasets/sovitrath/diabetic-retinopathy-2015-data-colored-resized",
+  "upstream": "https://www.kaggle.com/competitions/diabetic-retinopathy-detection",
+  "sha256": "2e81874412fcf34de4e9ae996f9573e6429bb920bc177fca853fe3ef3ca6f417",
+  "images": 35126
+}

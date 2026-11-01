@@ -1,0 +1,15 @@
+{
+  "sha256": "0859552a63d955f7b5b2fc7475b915a7160ce606b5d0a41597a8e9ce3ed08c03",
+  "input_shape": [
+    null,
+    224,
+    224,
+    3
+  ],
+  "input_range": [
+    -1,
+    1
+  ],
+  "gradcam_scope": "baseline_branch",
+  "clinical_validation": false
+}

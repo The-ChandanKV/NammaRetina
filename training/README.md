@@ -1,5 +1,57 @@
 # Training a NammaRetina candidate
 
+## Follow-up result: the 90% target was not reached
+
+Two actual CPU experiments were run: APTOS-only convolutional fine-tuning
+(eight completed epochs, no improvement over the baseline) and mixed APTOS /
+EyePACS fine-tuning (12 epochs). The full 35,126-image resized EyePACS dataset
+was downloaded and checksum-verified; the CPU training experiment used a
+seeded, balanced 1,000-image subset, not the full dataset.
+
+| Model | Validation accuracy | Test accuracy (354 images) |
+|---|---:|---:|
+| Preserved baseline | 77.56% | 82.77% (293/354) |
+| Mixed-data single network | 78.39% | Not separately evaluated |
+| Validation-selected 50/50 ensemble | 78.67% | 82.49% (292/354) |
+
+The ensemble's image-level bootstrap 95% accuracy interval is 78.53–86.16%,
+macro-F1 is 0.609, and QWK is 0.832. It did not improve held-out performance;
+the baseline remains the retained model. Neither experiment established a
+score above 90%, and no replacement was activated in production. Detailed
+reports are in `results/followup_*.json`.
+
+The larger GPU recipe below is an unexecuted follow-up, not an achieved score.
+More data, GPU access, or longer training does not guarantee the target.
+
+For the follow-up experiment targeting over 90% held-out accuracy, use
+[MultiDataset_GPU.ipynb](MultiDataset_GPU.ipynb). It downloads a checksum-pinned
+35,126-image resized EyePACS source and APTOS, then uses a seeded, capped
+supplementary subset for convolutional fine-tuning. The CPU experiment uses
+200 supplementary images per grade; the GPU recipe supports 1,000 per grade.
+Exact raw/prepared duplicates are excluded against every APTOS split. This is
+not verification of patient-level isolation across sources or all near-duplicates.
+The 90% value is a target, not a measured result or a deployment guarantee.
+
+```bash
+python -m training.download_data --dataset eyepacs224
+python -m training.finetune --baseline training/outputs/cpu_candidate \
+  --run-dir training/outputs/eyepacs_finetuned \
+  --extra-root training/data/eyepacs224 --extra-per-class 200 \
+  --epochs 12 --batch-size 32 --learning-rate 1e-5 \
+  --class-weight-power 0 --train-last-layers 30 --no-test
+python -m training.select_ensemble --baseline training/outputs/cpu_candidate \
+  --candidate training/outputs/eyepacs_finetuned \
+  --run-dir training/outputs/selected_candidate
+```
+
+The last command compares single networks and a small set of convex prediction
+averages on validation accuracy, preferring a single network on ties, and only
+then evaluates the test set. It checks prediction parity after serialization.
+An ensemble needs more memory and inference time; its Grad-CAM targets the
+baseline branch, not both networks. See the exported `gradcam_scope` field.
+The existing APTOS test benchmark has already been inspected for the baseline;
+an independent external evaluation is required for an unbiased final claim.
+
 The new trainer fixes EfficientNet's input normalization, audits exact duplicate
 images before training, and selects checkpoints using validation accuracy. It
 exports a model compatible with the current app and checks inference and real

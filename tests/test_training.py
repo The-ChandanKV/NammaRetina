@@ -16,6 +16,7 @@ from training.data_pipeline import build_manifest, SPLITS
 from training.download_data import extract_checked
 from training.evaluation import metrics, accuracy_interval
 import model_loader
+from training.finetune import supplementary_images
 
 
 class TrainingTests(unittest.TestCase):
@@ -43,6 +44,17 @@ class TrainingTests(unittest.TestCase):
         self.assertNotIn("train_0_0", set(manifest.id_code))
         self.assertEqual(audit["removed_images"], 1)
         self.assertEqual(manifest.group_id.nunique(), len(manifest))
+
+    def test_supplementary_images_exclude_evaluation_duplicates(self):
+        manifest, _ = build_manifest(self.images, self.root)
+        extra = self.root / "eyepacs" / "Mild"
+        extra.mkdir(parents=True)
+        (extra / "duplicate.png").write_bytes((self.images / "test_1_0.png").read_bytes())
+        rng = np.random.default_rng(101)
+        cv2.imwrite(str(extra / "new_patient_left.png"), rng.integers(0, 255, (60, 60, 3), dtype=np.uint8))
+        retained, counts = supplementary_images(extra.parent, manifest)
+        self.assertEqual(counts, [0, 1, 0, 0, 0])
+        self.assertEqual(Path(retained.iloc[0].path).stem, "new_patient_left")
 
     def test_conflicting_duplicate_labels_are_quarantined(self):
         (self.images / "train_0_0.png").write_bytes((self.images / "validation_1_0.png").read_bytes())

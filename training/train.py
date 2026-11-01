@@ -18,6 +18,13 @@ from training.data_pipeline import build_manifest, load_pixels, CLASS_NAMES
 from training.evaluation import metrics, accuracy_interval
 
 
+def uncompiled_classifier(tf, head):
+    """Copy classifier weights without carrying nested optimizer/metric state."""
+    clone = tf.keras.Sequential.from_config(head.get_config())
+    clone.set_weights(head.get_weights())
+    return clone
+
+
 def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, required=True)
@@ -168,6 +175,11 @@ def main():
                         tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", patience=4, factor=0.5, min_lr=1e-6)])
     best_head = tf.keras.models.load_model(head_path, compile=False)
     head.set_weights(best_head.get_weights())
+    # The frozen head has its own compiled metrics. Do not embed these in a
+    # separately compiled fine-tuning model: nested metric names can shadow
+    # root metrics or fail when restored with unbuilt state.
+    head = uncompiled_classifier(tf, head)
+    model = tf.keras.Model(extractor.inputs, head(extractor.output), name="nammaretina_efficientnetb0_v2")
     baseline_val = metrics(val_labels, head.predict(val_features, verbose=0))
     model_path = args.run_dir / "efficientnetb0_dr.keras"
     model.save(model_path)

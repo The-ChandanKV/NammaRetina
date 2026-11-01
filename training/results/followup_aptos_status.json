@@ -1,0 +1,8 @@
+{
+  "completed_epochs": 8,
+  "best_completed_validation_accuracy": 0.7728531956672668,
+  "baseline_validation_accuracy": 0.775623268698061,
+  "stopped_reason": "Interrupted after no improvement over the preserved baseline; switching to supplementary-data experiment",
+  "target_achieved": false,
+  "test_evaluated": false
+}

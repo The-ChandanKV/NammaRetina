@@ -149,9 +149,9 @@ establish clinical accuracy or generalization to other cameras or populations.
 5. Open `https://nammaretina.onrender.com/health`. Check `model_available: true`
    and that `model_sha256` exactly matches the exported digest. The endpoint
    returns 503 if either the database or model is unavailable.
-6. Restore the Supabase project and valid `SUPABASE_URL`, `SUPABASE_KEY`, and
-   `SUPABASE_SERVICE_KEY` as needed. The last production check found the database
-   unavailable; publishing weights alone cannot repair database connectivity.
+6. Check `database_available: true` as well. If it is false, restore the Supabase
+   project and valid `SUPABASE_URL`, `SUPABASE_KEY`, and `SUPABASE_SERVICE_KEY` as
+   needed. Database connectivity is independent of model loading.
 7. Sign in with an approved account, analyze a known validation image, open the
    XAI page, and download its PDF. Confirm that the model runs and real Grad-CAM
    is available. This smoke test confirms integration, not clinical validation.

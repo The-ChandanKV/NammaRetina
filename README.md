@@ -37,17 +37,14 @@ SECRET_KEY=change-me-to-a-long-random-string
 
 ### 3. Place the trained model (optional)
 
-The model is trained in **`Colab Notebooks/pipeline_augmentation.ipynb`** (EfficientNetB0 with a
-custom classification head, two-phase class-weighted training, and Cohen's quadratic-weighted-kappa
-evaluation). Run that notebook on a GPU (e.g. Google Colab) and download the exported
-`efficientnetb0_dr.keras`, then place it at:
+Use [the corrected GPU training notebook](training/Train_NammaRetina_GPU.ipynb) and
+[the training/deployment guide](training/README.md). The trainer downloads a versioned
+APTOS derivative, quarantines exact duplicates, selects on validation accuracy, and
+exports a compatible `efficientnetb0_dr.keras` with metrics and a SHA256 digest.
 
-```
-models/efficientnetb0_dr.keras
-```
-
-The app can start without model weights, but scan analysis is unavailable until the model loads.
-Unavailable analyses do not create diagnostic reports or progression records.
+Place a selected model at `models/efficientnetb0_dr.keras`, or configure `MODEL_URL`
+and `MODEL_SHA256` for a verified download on Render. The app can start without
+weights, but cannot record diagnoses until a real model loads.
 
 ### 4. Run the application
 
@@ -207,3 +204,17 @@ Grad-CAM failure is shown as unavailable and does not generate a synthetic atten
 Render deploys the GitHub `main` branch. `/health` exposes the running Render commit and whether the
 model is available; responses include `X-App-Revision`. The endpoint returns HTTP 503 when the database or model is unavailable, and HTTP 200 only when
 both are available. It does not validate model quality. Set `MODEL_URL` or provide model weights to enable analysis.
+
+
+## Latest training experiment
+
+A corrected, CPU-trained candidate achieved **82.77% accuracy on 354 held-out images**,
+macro-F1 **0.618**, and quadratic-weighted kappa **0.840**. Predictions are unchanged
+by serialization, and prediction/Grad-CAM checks passed. Severe and proliferative
+class recalls remain low; this is a research baseline for GPU fine-tuning and external
+validation. The old notebook score is not directly comparable because duplicate
+quarantine changes evaluation membership.
+
+See [measured results](training/results/cpu_metrics.json),
+[the GPU notebook](training/Train_NammaRetina_GPU.ipynb), and
+[the model promotion steps](training/README.md#render-production-steps).

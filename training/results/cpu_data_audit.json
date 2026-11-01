@@ -1,0 +1,31 @@
+{
+  "source_images": 3662,
+  "retained_images": 3504,
+  "removed_images": 158,
+  "conflicting_label_images": 62,
+  "near_duplicate_hamming_threshold": -1,
+  "patient_level_isolation": false,
+  "counts": {
+    "train": {
+      "0": 1426,
+      "1": 270,
+      "2": 736,
+      "3": 144,
+      "4": 213
+    },
+    "validation": {
+      "0": 172,
+      "1": 39,
+      "2": 102,
+      "3": 20,
+      "4": 28
+    },
+    "test": {
+      "0": 198,
+      "1": 29,
+      "2": 84,
+      "3": 13,
+      "4": 30
+    }
+  }
+}

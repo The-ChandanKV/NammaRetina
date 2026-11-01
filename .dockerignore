@@ -1,5 +1,12 @@
 .git
 .venv
+.venv-training
+.training-tools
+.training-python
+.training-cache
+training/data
+training/outputs
+training/runs
 venv
 __pycache__
 *.pyc

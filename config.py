@@ -43,6 +43,7 @@ MODEL_NAME = "efficientnetb0_dr.keras"
 MODEL_PATH = os.path.join(MODEL_DIR, MODEL_NAME)
 # Optional: download weights at boot (Google Drive uc?id=… or any direct HTTPS URL)
 MODEL_URL = os.getenv("MODEL_URL", "").strip()
+MODEL_SHA256 = os.getenv("MODEL_SHA256", "").strip().lower()
 
 # DR Severity Labels
 DR_CLASSES = {

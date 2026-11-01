@@ -41,3 +41,12 @@ pdf_text.txt
 # Processed dataset
 processed/
 processed.zip
+
+# Local training environments, datasets, and model artifacts
+.training-tools/
+.training-python/
+.venv-training/
+.training-cache/
+training/data/
+training/outputs/
+training/runs/

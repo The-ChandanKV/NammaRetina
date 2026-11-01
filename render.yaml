@@ -15,3 +15,7 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: MODEL_URL
+        sync: false
+      - key: MODEL_SHA256
+        sync: false

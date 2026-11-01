@@ -1,0 +1,33 @@
+{
+  "model_file": "efficientnetb0_dr.keras",
+  "sha256": "839b2f9c88a60b2273d5043f9a5eb53634c03d86da464a7aa589e4d54097803b",
+  "input_shape": [
+    null,
+    224,
+    224,
+    3
+  ],
+  "input_range": [
+    -1,
+    1
+  ],
+  "normalization_adapter": "restore_efficientnet_pixel_range",
+  "preprocessing": "shared_ben_graham_v1",
+  "class_names": [
+    "No DR",
+    "Mild",
+    "Moderate",
+    "Severe",
+    "Proliferative DR"
+  ],
+  "tensorflow_version": "2.16.2",
+  "keras_version": "3.3.3",
+  "seed": 42,
+  "mode": "frozen",
+  "platform": "macOS-26.7.1-x86_64-i386-64bit",
+  "manifest_sha256": "ffb4860811ff2ce06d52591118d52b34dccfd934e66340fb14ccef489a499068",
+  "dataset_source": "https://www.kaggle.com/datasets/sovitrath/diabetic-retinopathy-224x224-2019-data",
+  "test_evaluated": true,
+  "clinical_validation": false,
+  "dataset_archive_sha256": "8a6c20b4b645efa026e1695511e5eadf8a8bf0dd5bbf5d906f35b53919020ce3"
+}

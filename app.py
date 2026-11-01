@@ -134,7 +134,7 @@ def protect_requests():
 
 @app.route("/health")
 def health():
-    from model_loader import is_model_available
+    from model_loader import is_model_available, model_fingerprint
     try:
         init_db()
         database_available = True
@@ -143,6 +143,7 @@ def health():
     model_available = is_model_available()
     ready = database_available and model_available
     return {"status": "ok" if ready else "unavailable", "model_available": model_available,
+            "model_sha256": model_fingerprint(),
             "database_available": database_available,
             "revision": os.getenv("RENDER_GIT_COMMIT", "local")}, 200 if ready else 503
 

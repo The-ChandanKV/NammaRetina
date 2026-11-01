@@ -23,6 +23,7 @@ import model_loader
 import preprocess_local
 import progression
 import xai_engine
+import httpx
 
 
 class RegressionTests(unittest.TestCase):
@@ -104,6 +105,27 @@ class RegressionTests(unittest.TestCase):
     def test_public_registration_blocked_after_bootstrap(self):
         self.patch(web, "count_users", return_value=1)
         self.assertEqual(self.client.get("/register").status_code, 302)
+
+    def test_backend_outage_shows_service_message(self):
+        self.patch(web, "count_users", side_effect=httpx.ConnectError("offline"))
+        response = self.client.get("/register")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn(b"Service temporarily unavailable", response.data)
+
+    def test_health_reports_backend_and_model_outage(self):
+        self.patch(web, "init_db", side_effect=httpx.ConnectError("offline"))
+        self.patch(model_loader, "is_model_available", return_value=False)
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.json["database_available"])
+        self.assertFalse(response.json["model_available"])
+
+    def test_health_reports_ready_only_with_database_and_model(self):
+        self.patch(web, "init_db", return_value="supabase")
+        self.patch(model_loader, "is_model_available", return_value=True)
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["status"], "ok")
 
     def test_new_oauth_accounts_require_approval(self):
         sb = Mock()

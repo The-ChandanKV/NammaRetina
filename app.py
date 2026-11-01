@@ -29,6 +29,8 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 from PIL import Image
+import httpx
+from postgrest.exceptions import APIError
 
 import config
 from database import (
@@ -55,6 +57,7 @@ from database import (
     get_or_create_sso_user,
     download_storage_file,
     get_report,
+    DatabaseUnavailable,
 )
 from gradcam import generate_gradcam
 from llm_agent import explain_report
@@ -132,8 +135,24 @@ def protect_requests():
 @app.route("/health")
 def health():
     from model_loader import is_model_available
-    return {"status": "ok", "model_available": is_model_available(),
-            "revision": os.getenv("RENDER_GIT_COMMIT", "local")}
+    try:
+        init_db()
+        database_available = True
+    except Exception:
+        database_available = False
+    model_available = is_model_available()
+    ready = database_available and model_available
+    return {"status": "ok" if ready else "unavailable", "model_available": model_available,
+            "database_available": database_available,
+            "revision": os.getenv("RENDER_GIT_COMMIT", "local")}, 200 if ready else 503
+
+
+@app.errorhandler(httpx.RequestError)
+@app.errorhandler(APIError)
+@app.errorhandler(DatabaseUnavailable)
+def backend_unavailable(error):
+    logger.error("Backend service unavailable: %s", type(error).__name__)
+    return render_template("unavailable.html"), 503
 
 
 @app.context_processor
@@ -969,9 +988,11 @@ def create_app():
 
 def _bootstrap() -> None:
     """Connect DB + warm the model. Runs under gunicorn and `python app.py`."""
-    init_db()
-    logger.info("Supabase database connected.")
-    load_model()
+    try:
+        init_db()
+        logger.info("Supabase database connected.")
+    finally:
+        load_model()
 
 
 # Gunicorn imports this module — run bootstrap at import time in production.

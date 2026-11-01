@@ -34,6 +34,10 @@ DB_PATH = None   # SQLite no longer used
 _sb: Client | None = None
 
 
+class DatabaseUnavailable(RuntimeError):
+    """Backend configuration is missing or invalid."""
+
+
 def _get_sb() -> Client:
     """Return a Supabase client using the service-role key (server-side only)."""
     global _sb
@@ -41,11 +45,11 @@ def _get_sb() -> Client:
         url = os.getenv("SUPABASE_URL", "")
         key = os.getenv("SUPABASE_SERVICE_KEY", "")
         if not url or not key or "YOUR_PROJECT_ID" in url:
-            raise RuntimeError(
+            raise DatabaseUnavailable(
                 "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env "
                 "before starting the application."
             )
-        _sb = create_client(url, key)
+        _sb = create_client(url, key, options=ClientOptions(postgrest_client_timeout=10))
     return _sb
 
 
@@ -93,7 +97,7 @@ def init_db(*args, **kwargs) -> str:
     _reject_local_db(kwargs.get("db_path", args[0] if args else None))
     try:
         sb = _get_sb()
-        sb.table("patients").select("patient_id").limit(1).execute()
+        sb.table("patients").select("patient_id").limit(0).execute()
         logger.info("Supabase connection verified.")
         return "supabase"
     except Exception as exc:

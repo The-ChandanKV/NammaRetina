@@ -205,5 +205,5 @@ unavailable. Image-processing lesion indicators are heuristic measurements, not 
 Grad-CAM failure is shown as unavailable and does not generate a synthetic attention map.
 
 Render deploys the GitHub `main` branch. `/health` exposes the running Render commit and whether the
-model is available; responses include `X-App-Revision`. A healthy HTTP process alone does not prove
-model quality or database readiness. Set `MODEL_URL` or provide model weights to enable analysis.
+model is available; responses include `X-App-Revision`. The endpoint returns HTTP 503 when the database or model is unavailable, and HTTP 200 only when
+both are available. It does not validate model quality. Set `MODEL_URL` or provide model weights to enable analysis.

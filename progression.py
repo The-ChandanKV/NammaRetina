@@ -20,7 +20,7 @@ def _validate_severity(severity: int) -> int:
     return severity
 
 
-def track_progression(patient_id: int, current_severity: int, visit_date: str | None = None, db_path=DB_PATH):
+def track_progression(patient_id: int, current_severity: int, visit_date: str | None = None, db_path=DB_PATH, report_id=None):
     """Track the change in pathology severity between the most recent prior report and the current one.
 
     ``visit_date`` stamps the progression record with the report's date (so the
@@ -31,10 +31,18 @@ def track_progression(patient_id: int, current_severity: int, visit_date: str | 
         raise ValueError(f"Patient {patient_id} does not exist.")
 
     current_severity = _validate_severity(current_severity)
+    if visit_date is None:
+        visit_date = datetime.now().strftime("%Y-%m-%d")
     reports = get_reports_for_patient(patient_id, db_path=db_path)
+    if report_id is not None:
+        reports = [row for row in reports if row["report_id"] != report_id and
+                   (str(row["date"]), row["report_id"]) < (visit_date, report_id)]
+    reports = [row for row in reports if float(row.get("confidence") or 0) > 0]
 
     previous_severity = None
-    if reports:
+    if reports and report_id is not None:
+        previous_severity = int(reports[-1]["severity"])
+    elif reports:
         last_recorded_severity = int(reports[-1]["severity"])
         if last_recorded_severity == current_severity and len(reports) > 1:
             previous_severity = int(reports[-2]["severity"])
@@ -51,9 +59,6 @@ def track_progression(patient_id: int, current_severity: int, visit_date: str | 
         status = "Improved"
     else:
         status = "Stable"
-
-    if visit_date is None:
-        visit_date = datetime.now().strftime("%Y-%m-%d")
 
     record = {
         "patient_id": patient_id,
@@ -78,7 +83,8 @@ def plot_progression(patient_id: int, db_path=DB_PATH) -> str:
     if get_patient(patient_id, db_path=db_path) is None:
         raise ValueError(f"Patient {patient_id} does not exist.")
 
-    reports = get_reports_for_patient(patient_id, db_path=db_path)
+    reports = [row for row in get_reports_for_patient(patient_id, db_path=db_path)
+               if float(row.get("confidence") or 0) > 0]
     if not reports:
         raise ValueError(f"No reports found for patient {patient_id}.")
 

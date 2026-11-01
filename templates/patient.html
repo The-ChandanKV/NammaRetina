@@ -34,7 +34,7 @@
       <td>#{{ r.report_id }}</td><td>{{ r.date }}</td>
       <td><a href="{{ url_for('result', report_id=r.report_id) }}"><img class="thumb" src="{{ r.image_path|file_url }}" alt="Scan"></a></td>
       <td><a href="{{ url_for('result', report_id=r.report_id) }}"><img class="thumb" src="{{ r.heatmap_path|file_url }}" alt="Heatmap"></a></td>
-      <td><span class="sev sev-{{ r.severity }}">{{ dr_classes.get(r.severity, 'Unknown') }}</span></td>
+      <td><span class="sev sev-{{ r.severity }}">{{ dr_classes.get(r.severity, 'Unknown') if r.confidence and r.confidence > 0 else 'Analysis unavailable' }}</span></td>
       <td>{% if r.confidence and r.confidence > 0 %}{{ '%.1f'|format(r.confidence * 100) }}%{% else %}<span class="muted">N/A</span>{% endif %}</td>
       <td style="max-width:300px">{{ r.recommendation }}</td>
       <td style="text-align:right;white-space:nowrap">

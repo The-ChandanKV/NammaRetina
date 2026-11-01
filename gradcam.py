@@ -1,7 +1,7 @@
 """
 NammaRetina - Grad-CAM Heatmap Generator
 Generates Grad-CAM visualisations for the EfficientNetB0 DR model.
-Falls back to a placeholder heatmap when the model is not available.
+Returns None when a genuine model explanation is unavailable.
 """
 
 from __future__ import annotations
@@ -36,13 +36,13 @@ def generate_gradcam(
     predicted_class: int,
     save_dir: str,
     layer_name: str | None = None,
-) -> str:
+) -> str | None:
     """Generate and save a Grad-CAM heatmap overlay.
 
     Parameters
     ----------
     model : keras.Model or None
-        The loaded Keras model. If None, a placeholder heatmap is generated.
+        The loaded Keras model. If None, Grad-CAM is unavailable.
     image_path : str
         Path to the original retinal image.
     predicted_class : int
@@ -79,11 +79,11 @@ def generate_gradcam(
         try:
             heatmap = _compute_gradcam(model, image_path, predicted_class, layer_name)
         except Exception as exc:
-            logger.warning("Grad-CAM computation failed (%s). Using placeholder.", exc)
-            heatmap = _placeholder_heatmap(original_resized)
+            logger.warning("Grad-CAM computation unavailable: %s", exc)
+            return None
     else:
-        logger.info("No model available — generating placeholder heatmap.")
-        heatmap = _placeholder_heatmap(original_resized)
+        logger.info("No model available — Grad-CAM is unavailable.")
+        return None
 
     # Resize heatmap to match the original image
     heatmap = cv2.resize(heatmap, (original_resized.shape[1], original_resized.shape[0]))
@@ -131,10 +131,8 @@ def _compute_gradcam(
     import tensorflow as tf
 
     # Preprocess the image
-    img = cv2.imread(image_path)
-    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_array = np.expand_dims(img.astype(np.float32) / 127.5 - 1.0, axis=0)
+    from model_loader import preprocess_image
+    img_array = preprocess_image(image_path)
 
     # Locate the target conv layer, searching nested sub-models as a fallback.
     conv_layer = _find_conv_layer(model, layer_name)

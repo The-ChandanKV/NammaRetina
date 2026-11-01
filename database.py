@@ -14,10 +14,11 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 from werkzeug.security import check_password_hash, generate_password_hash
 
 load_dotenv()
@@ -46,14 +47,6 @@ def _get_sb() -> Client:
             )
         _sb = create_client(url, key)
     return _sb
-
-
-def get_connection():
-    """Compatibility shim — returns the Supabase client instead of a sqlite3 connection.
-    Code that calls conn.execute(...) directly in app.py has been updated to use
-    the helper functions below instead.
-    """
-    return _get_sb()
 
 
 def _next_id(table: str, id_col: str) -> int:
@@ -97,6 +90,7 @@ def _insert_with_id_fallback(table: str, id_col: str, payload: dict) -> dict:
 
 def init_db(*args, **kwargs) -> str:
     """Verify Supabase connectivity on startup. Tables are created via the SQL Editor."""
+    _reject_local_db(kwargs.get("db_path", args[0] if args else None))
     try:
         sb = _get_sb()
         sb.table("patients").select("patient_id").limit(1).execute()
@@ -116,19 +110,8 @@ def add_patient(
     diabetes_history: str,
     db_path=None,
 ) -> int:
-    """Return patient_id, creating the patient only if they don't already exist."""
-    sb = _get_sb()
-    existing = (
-        sb.table("patients")
-        .select("patient_id")
-        .ilike("name", name.strip())
-        .eq("age", age)
-        .ilike("gender", gender.strip())
-        .limit(1)
-        .execute()
-    )
-    if existing.data:
-        return int(existing.data[0]["patient_id"])
+    """Create a patient; follow-up visits must use an explicit patient_id."""
+    _reject_local_db(db_path)
 
     row = _insert_with_id_fallback(
         "patients",
@@ -145,6 +128,7 @@ def add_patient(
 
 def get_patient(patient_id: int, db_path=None) -> Optional[dict]:
     """Fetch a single patient by patient_id. Returns a dict or None."""
+    _reject_local_db(db_path)
     sb = _get_sb()
     result = (
         sb.table("patients")
@@ -170,6 +154,7 @@ def add_report(
     db_path=None,
 ) -> int:
     """Insert a report row and return the new report_id."""
+    _reject_local_db(db_path)
     if date is None:
         date = datetime.date.today().isoformat()
 
@@ -211,6 +196,7 @@ def update_report_llm_summary(report_id: int, llm_summary: str) -> None:
 
 def get_reports_for_patient(patient_id: int, db_path=None) -> list[dict]:
     """Get all reports for the patient in chronological order."""
+    _reject_local_db(db_path)
     sb = _get_sb()
     result = (
         sb.table("reports")
@@ -246,6 +232,7 @@ def add_progression_record(
     db_path=None,
 ) -> int:
     """Insert a progression record and return the new progression_id."""
+    _reject_local_db(db_path)
     if date is None:
         date = datetime.date.today().isoformat()
 
@@ -265,6 +252,7 @@ def add_progression_record(
 
 def get_progression_history(patient_id: int, db_path=None) -> list[dict]:
     """Get the progression history for a patient, oldest first."""
+    _reject_local_db(db_path)
     sb = _get_sb()
     result = (
         sb.table("progression")
@@ -281,6 +269,7 @@ def get_progression_history(patient_id: int, db_path=None) -> list[dict]:
 
 def count_users(db_path=None) -> int:
     """Return the number of registered users (used to bootstrap the first admin)."""
+    _reject_local_db(db_path)
     sb = _get_sb()
     result = sb.table("user_roles").select("id", count="exact").execute()
     return result.count or 0
@@ -291,6 +280,7 @@ def create_user(username: str, password: str, email: str, role: str = "doctor", 
     Register a new user via Supabase Auth and store their role.
     Returns the Supabase user UUID as a string.
     """
+    _reject_local_db(db_path)
     sb = _get_sb()
 
     # 1. Create the auth user
@@ -320,10 +310,8 @@ def verify_user(email: str, password: str, db_path=None) -> Optional[dict]:
     Authenticate via Supabase Auth.
     Returns a dict with user_id, username, role on success; None on failure.
     """
-    sb_anon = create_client(
-        os.getenv("SUPABASE_URL", ""),
-        os.getenv("SUPABASE_KEY", ""),
-    )
+    _reject_local_db(db_path)
+    sb_anon = _auth_client()
     try:
         auth_resp = sb_anon.auth.sign_in_with_password(
             {"email": email.strip().lower(), "password": password}
@@ -359,6 +347,7 @@ def verify_user(email: str, password: str, db_path=None) -> Optional[dict]:
 
 def get_user_by_username(username: str, db_path=None) -> Optional[dict]:
     """Fetch user info by username from user_roles table."""
+    _reject_local_db(db_path)
     sb = _get_sb()
     result = (
         sb.table("user_roles")
@@ -372,9 +361,14 @@ def get_user_by_username(username: str, db_path=None) -> Optional[dict]:
 
 # ── SSO / Google OAuth helpers ────────────────────────────────────────────────
 
+def _auth_client():
+    """Request-local auth client; OAuth must never mutate the service-role client."""
+    return create_client(os.getenv("SUPABASE_URL", ""), os.getenv("SUPABASE_KEY", ""),
+                         options=ClientOptions(flow_type="pkce", auto_refresh_token=False))
+
 def get_oauth_sign_in_url(redirect_to: str, provider: str = "google") -> tuple[str, str]:
     """Generate Supabase OAuth sign-in URL and PKCE verifier."""
-    sb = _get_sb()
+    sb = _auth_client()
     res = sb.auth.sign_in_with_oauth({
         "provider": provider,
         "options": {
@@ -387,7 +381,9 @@ def get_oauth_sign_in_url(redirect_to: str, provider: str = "google") -> tuple[s
 
 def exchange_oauth_code(code: str, verifier: Optional[str] = None):
     """Exchange PKCE authorization code for authenticated user."""
-    sb = _get_sb()
+    if not verifier:
+        raise ValueError("Sign-in session expired. Please start Google sign-in again.")
+    sb = _auth_client()
     auth_resp = sb.auth.exchange_code_for_session({
         "auth_code": code,
         "code_verifier": verifier or "",
@@ -397,7 +393,7 @@ def exchange_oauth_code(code: str, verifier: Optional[str] = None):
 
 def get_user_from_access_token(access_token: str):
     """Retrieve user object given an OAuth access token."""
-    sb = _get_sb()
+    sb = _auth_client()
     user_resp = sb.auth.get_user(access_token)
     return user_resp.user if user_resp else None
 
@@ -428,7 +424,9 @@ def get_or_create_sso_user(
         }
 
     # First user gets admin, subsequent get doctor
-    role = "admin" if count_users() == 0 else "doctor"
+    if count_users() > 0:
+        raise PermissionError("Account access requires administrator approval. Ask your administrator to create your account first.")
+    role = "admin"
 
     # Derive unique display username
     raw_name = (full_name or (email.split("@")[0] if email else "Doctor")).strip()
@@ -488,7 +486,7 @@ def upload_file(local_path: str, bucket: str, remote_path: str) -> str:
     mime_map = {
         "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
         "bmp": "image/bmp", "tiff": "image/tiff", "tif": "image/tiff",
-        "pdf": "application/pdf",
+        "pdf": "application/pdf", "json": "application/json",
     }
     content_type = mime_map.get(ext, "application/octet-stream")
 
@@ -501,8 +499,34 @@ def upload_file(local_path: str, bucket: str, remote_path: str) -> str:
         logger.info("Uploaded %s → %s/%s", local_path, bucket, remote_path)
     except Exception as exc:
         logger.warning("Storage upload failed (%s/%s): %s", bucket, remote_path, exc)
+        raise
 
     return remote_path
+
+
+def download_storage_file(storage_path: str, destination: str | Path) -> str:
+    """Restore a private artifact without exposing signed URLs or credentials."""
+    bucket, remote = storage_path.split("/", 1)
+    if bucket not in {BUCKET_IMAGES, BUCKET_HEATMAPS, BUCKET_REPORTS} or not remote:
+        raise ValueError("Unsupported storage path")
+    data = _get_sb().storage.from_(bucket).download(remote)
+    target = Path(destination)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic replacement avoids serving a partially downloaded artifact.
+    import tempfile
+    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(data)
+            handle.flush()
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return str(target)
 
 
 def get_signed_url(bucket: str, remote_path: str, expiry: int = SIGNED_URL_EXPIRY) -> Optional[str]:
@@ -587,7 +611,8 @@ class _SupabasePseudoConn:
                 self._sb.table("progression")
                 .select("*")
                 .eq("patient_id", patient_id)
-                .order("date", desc=False)
+                .order("date", desc="ORDER BY DATE DESC" in sql_clean)
+                .order("progression_id", desc="ORDER BY DATE DESC" in sql_clean)
                 .execute()
             )
             return _FakeResult(result.data or [])
@@ -605,24 +630,12 @@ class _SupabasePseudoConn:
                 .select("*")
                 .eq("patient_id", patient_id)
                 .order("date", desc=True)
+                .order("report_id", desc=True)
                 .execute()
             )
             return _FakeResult(result.data or [])
 
-        # SELECT * FROM PROGRESSION WHERE PATIENT_ID = ? ORDER BY DATE DESC
-        if "FROM PROGRESSION WHERE PATIENT_ID" in sql_clean and "ORDER BY DATE DESC" in sql_clean:
-            patient_id = params[0]
-            result = (
-                self._sb.table("progression")
-                .select("*")
-                .eq("patient_id", patient_id)
-                .order("date", desc=True)
-                .execute()
-            )
-            return _FakeResult(result.data or [])
-
-        logger.warning("Unhandled SQL in pseudo-conn: %s", sql[:120])
-        return _FakeResult([])
+        raise NotImplementedError("Unsupported query in Supabase compatibility adapter")
 
 
 class _FakeResult:
@@ -639,7 +652,13 @@ class _FakeResult:
 
 def get_connection(db_path=None):
     """Return a pseudo-connection that routes SQL to Supabase."""
+    _reject_local_db(db_path)
     return _SupabasePseudoConn(_get_sb())
+
+
+def _reject_local_db(db_path):
+    if db_path is not None:
+        raise ValueError("SQLite db_path is no longer supported. Use an isolated Supabase test backend.")
 
 
 # Re-export so progression.py import still works

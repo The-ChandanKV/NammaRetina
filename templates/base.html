@@ -18,7 +18,11 @@
         </nav>
         <div class="nav-user">
             <span>{{ session.username }}</span><span class="chip">{{ session.role }}</span>
-            <a id="nav-logout" class="btn btn-sm" href="{{ url_for('logout') }}">Logout</a>
+            {% if session.role == 'admin' %}<a class="btn btn-sm" href="{{ url_for('register') }}">Add account</a>{% endif %}
+            <form method="POST" action="{{ url_for('logout') }}" style="margin:0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button id="nav-logout" class="btn btn-sm" type="submit">Logout</button>
+            </form>
         </div>
     </div>
 </header>

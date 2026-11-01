@@ -11,25 +11,26 @@
     <a id="btn-rescan" class="btn" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ New scan for patient</a>
     <a id="btn-xai" class="btn btn-primary" href="{{ url_for('xai_explain', report_id=report.report_id) }}" style="background:linear-gradient(135deg,#7c3aed,#4f46e5)">🔍 Explain AI Decision</a>
     <form method="POST" action="{{ url_for('regenerate_report', report_id=report.report_id) }}" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button id="btn-regen" class="btn" type="submit">↻ Regenerate PDF</button></form>
-    {% if pdf_exists %}<a id="btn-pdf" class="btn" href="{{ url_for('download_report', report_id=report.report_id) }}">⬇ Download PDF</a>{% endif %}
+    {% if pdf_exists and model_used %}<a id="btn-pdf" class="btn" href="{{ url_for('download_report', report_id=report.report_id) }}">⬇ Download PDF</a>{% endif %}
   </div>
 </div>
 
 <div class="grid grid-2">
   <div>
     <div class="card hero-result">
-      <span class="sev sev-{{ severity }}">{{ severity_label }} · Stage {{ severity }}/4</span>
+      <span class="sev sev-{{ severity }}">{{ severity_label }}{% if model_used %} · Stage {{ severity }}/4{% endif %}</span>
       {% if model_used %}
       <div class="gauge" style="--pct: {{ confidence_pct }}; --c: var(--sev-{{ severity }})">
         <div><span>{{ confidence_pct }}%</span><small>confidence</small></div></div>
       {% else %}
       <p class="muted" style="margin:1.5rem 0">Confidence N/A (model unavailable)</p>
       {% endif %}
-      <div class="sev-scale">
+      {% if model_used %}<div class="sev-scale">
         {% for i in range(5) %}<div class="{{ 'on' if i <= severity }}" style="{{ 'background:var(--sev-%d);color:var(--sev-%d)'|format(i,i) if i <= severity }}"></div>{% endfor %}
       </div>
-      <p style="margin-top:1rem">Progression: <span class="status status-{{ progression_status }}">{{ progression_status }}</span></p>
+      {% endif %}<p style="margin-top:1rem">Progression: <span class="status status-{{ progression_status }}">{{ progression_status }}</span></p>
       {% if not model_used %}
       <div class="flash flash-warning" style="text-align:left">Prediction not performed — no trained model is loaded, so this severity is a placeholder, not an AI reading.</div>
       {% endif %}
@@ -134,7 +135,7 @@
     <div class="card"><h3>Scan &amp; Grad-CAM</h3>
       <div class="compare">
         <div><div class="img-frame"><img src="{{ image_url }}" alt="Retinal scan"></div><p class="note">Original</p></div>
-        <div><div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap"></div><p class="note">Regions the AI focused on</p></div>
+        <div>{% if heatmap_url %}<div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap"></div><p class="note">Regions the AI focused on</p>{% else %}<p class="muted">Grad-CAM unavailable for this scan.</p>{% endif %}</div>
       </div></div>
     {% if progression_graph_url %}
     <div class="card"><h3>Progression history</h3>

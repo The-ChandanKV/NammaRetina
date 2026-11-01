@@ -9,6 +9,8 @@
 </div>
 
 <form action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data" id="uploadForm">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{% if prefill %}<input type="hidden" name="patient_id" value="{{ prefill.patient_id }}">{% endif %}
 <div class="grid grid-2">
   <div class="card">
     <h3>1 · Retinal image</h3>
@@ -40,7 +42,7 @@
     </div>
     <div class="field"><label for="diabetesHistory">Diabetes history</label>
       <textarea id="diabetesHistory" name="diabetes_history" rows="3" placeholder="e.g. Type 2 diabetes for 10 years">{{ prefill.diabetes_history if prefill and prefill.diabetes_history != 'Not provided' }}</textarea></div>
-    <p class="note">Re-uploading the same name, age and gender adds a new visit to the existing patient so progression is tracked.</p>
+    <p class="note">To add a visit to an existing patient, open their record and select Add follow-up scan.</p>
     <button type="submit" id="submitBtn" class="btn btn-primary btn-lg">Analyse retinal scan</button>
   </div>
 </div>

@@ -25,6 +25,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import shutil
+from retinal_preprocessing import prepare_retina
 
 # =============================================================================
 # Paths
@@ -91,9 +92,7 @@ def preprocess_single(img_path):
         return None, reason
 
     img = cv2.imread(img_path)
-    img = crop_black_borders(img)
-    img = cv2.resize(img, (TARGET_SIZE, TARGET_SIZE), interpolation=cv2.INTER_AREA)
-    img = ben_graham_preprocess(img, sigmaX=10)
+    img = prepare_retina(img, TARGET_SIZE)
 
     # Clip to valid uint8 range (Ben Graham can produce values outside 0-255)
     img = np.clip(img, 0, 255).astype(np.uint8)

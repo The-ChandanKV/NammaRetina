@@ -18,7 +18,7 @@ pip install -r requirements.txt
 
 ### 2. Set up environment variables (optional)
 
-Create a `.env` file in the project root with your LLM API key(s). The system tries providers in this order and falls back to rule-based explanations if none are set:
+Create a `.env` file in the project root using `.env.example`. Supabase credentials are required; LLM API keys are optional. The system tries providers in this order and falls back to rule-based explanations if none are set:
 
 ```env
 # Google Gemini (recommended — already referenced in config.py)
@@ -46,8 +46,8 @@ evaluation). Run that notebook on a GPU (e.g. Google Colab) and download the exp
 models/efficientnetb0_dr.keras
 ```
 
-The app works without it (using fallback predictions shown as **N/A confidence** — never a fabricated
-reading), but real predictions require the model.
+The app can start without model weights, but scan analysis is unavailable until the model loads.
+Unavailable analyses do not create diagnostic reports or progression records.
 
 ### 4. Run the application
 
@@ -55,14 +55,14 @@ reading), but real predictions require the model.
 python app.py
 ```
 
-Then open **http://localhost:5000** in your browser.
+Then open **http://localhost:5001** in your browser.
 
 ### 5. Create your account
 
 The dashboard and all patient data are behind a login. On first run, open the app and click
-**Create one** on the sign-in page to register. **The first account created becomes the admin;**
-everyone who registers afterwards is a `doctor`. All routes except `/login` and `/register` require
-you to be signed in.
+**Create one** on the sign-in page to register. **The first account created becomes the admin.** After setup, an administrator must create additional
+accounts using **Add account**. Google sign-in is available to provisioned users. Approved clinicians
+share the care-team dashboard; patient assignments and organization isolation are not implemented.
 
 > To run with the auto-reloader/debugger for local development, set `FLASK_DEBUG=1`. Debug mode is
 > **off** by default so it is never accidentally enabled in production.
@@ -74,14 +74,14 @@ you to be signed in.
 When you upload a retinal image through the web interface, the following pipeline runs automatically:
 
 1. **Image Upload** — Retinal fundus photograph is saved to `static/uploads/`
-2. **Patient Registration** — Patient details are stored in the SQLite database
+2. **Patient Registration** — Patient details are stored in Supabase
 3. **Model Prediction** — EfficientNetB0 classifies DR severity (0–4)
 4. **Grad-CAM Heatmap** — Highlights the retinal regions influencing the prediction
 5. **Progression Tracking** — Compares current severity against prior scans
 6. **Disease Spread Simulation** — Probabilistic visualisation of future retinal changes
 7. **Treatment Recommendation** — Rule-based clinical follow-up guidance
 8. **LLM Explanation** — Plain-language summary for doctors and patients
-9. **Database Record** — Full report saved to SQLite
+9. **Database Record** — Full report saved to Supabase
 10. **PDF Report** — Downloadable medical report generated via ReportLab
 
 ---
@@ -94,7 +94,7 @@ All routes except `/login` and `/register` require an authenticated session.
 |---|---|---|---|
 | `/register` | GET/POST | Public | Create an account (first user becomes admin) |
 | `/login` | GET/POST | Public | Sign in |
-| `/logout` | GET | — | Sign out |
+| `/logout` | POST | — | Sign out |
 | `/` | GET | Required | Upload form with patient details |
 | `/upload` | POST | Required | Runs the full diagnostic pipeline |
 | `/result/<report_id>` | GET | Required | Displays the diagnostic result |
@@ -110,7 +110,7 @@ All routes except `/login` and `/register` require an authenticated session.
 NammaRetina/
 ├── app.py                     # Flask web application (Phase 10)
 ├── config.py                  # Central configuration
-├── database.py                # SQLite database layer
+├── database.py                # Supabase database layer
 ├── model_loader.py            # Model loading and prediction
 ├── gradcam.py                 # Grad-CAM heatmap generation (Phase 5)
 ├── preprocess_local.py        # Image preprocessing pipeline (Phase 2)
@@ -175,7 +175,7 @@ NammaRetina/
 
 - **Python**, **TensorFlow / Keras**, **EfficientNetB0**
 - **OpenCV**, **Pillow**, **Matplotlib**
-- **Flask**, **SQLite**
+- **Flask**, **Supabase Auth / Postgres / Storage**
 - **ReportLab** (PDF generation)
 - **Google Gemini / OpenAI / HuggingFace** (LLM integration)
 
@@ -184,3 +184,26 @@ NammaRetina/
 ## Team
 
 g7 — Pranav, Chandan, Jyotir, Jhenka
+
+
+## Regression checks and deployment
+
+Run `.venv/bin/python -m unittest discover -s tests -v` (or `python` in your activated environment).
+The suite mocks external services and must not write to production Supabase. Legacy SQLite `db_path`
+arguments now fail explicitly rather than silently writing to the configured Supabase project.
+
+Follow-up scans must be started from the patient record to preserve its ID. Entering patient details
+on the new-scan form creates a new patient, even if another record has the same demographics.
+Training data preparation and online inference share `retinal_preprocessing.py`.
+
+All POST forms require a session CSRF token. Generated files under `/static/` are blocked; private
+artifacts are accessed through authenticated routes or short-lived Supabase signed URLs. PDFs and
+source images can be restored from storage after a deployment. Failed storage writes are surfaced.
+
+XAI displays only recorded classifier scores. Older reports without probability metadata show it as
+unavailable. Image-processing lesion indicators are heuristic measurements, not model attributions.
+Grad-CAM failure is shown as unavailable and does not generate a synthetic attention map.
+
+Render deploys the GitHub `main` branch. `/health` exposes the running Render commit and whether the
+model is available; responses include `X-App-Revision`. A healthy HTTP process alone does not prove
+model quality or database readiness. Set `MODEL_URL` or provide model weights to enable analysis.

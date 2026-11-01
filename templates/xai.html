@@ -160,14 +160,14 @@
 <!-- Hero -->
 <div class="xai-hero">
   <div class="xai-badge">🔬 Explainable AI · Zero API Keys · Local Analysis</div>
-  <h1 class="gradient-text">AI Decision Explained</h1>
+  <h1 class="gradient-text">Retinal Image Analysis</h1>
   <p>Why did the model classify this retinal scan as <strong>{{ severity_label }}</strong>?
-     This dashboard breaks down every contributing factor — no cloud APIs, no black box.</p>
+     Recorded model scores and separate image-processing measurements are shown below.</p>
 </div>
 
 <!-- ── Narrative (full width) ── -->
 <div class="xai-card" style="margin-bottom:1.2rem">
-  <h3><span class="icon">📋</span> AI Reasoning Narrative</h3>
+  <h3><span class="icon">📋</span> Analysis Summary</h3>
   <div class="xai-narrative">{{ xai.narrative | safe }}</div>
 </div>
 
@@ -190,6 +190,7 @@
           </div>
         </div>
       </div>
+      {% if not xai.prob_chart %}<p class="muted">Per-class model scores were not recorded for this report.</p>{% endif %}
       {% for cls in xai.prob_chart %}
       <div class="prob-row">
         <div class="prob-label">
@@ -203,39 +204,10 @@
       {% endfor %}
     </div>
 
-    <!-- Confidence decomposition -->
-    <div class="xai-card">
-      <h3><span class="icon">⚖️</span> Confidence Decomposition</h3>
-      <p style="font-size:.8rem;color:var(--muted);margin:0 0 1rem">How much each clinical factor contributed to the final confidence score.</p>
-      {% for d in xai.decomposition %}
-      <div class="dec-row">
-        <div class="dec-header">
-          <span class="dec-factor">{{ d.factor }}</span>
-          <span class="dec-pct">{{ d.contribution }}%</span>
-        </div>
-        <div class="dec-desc">{{ d.description }}</div>
-        <div class="dec-bar">
-          <div class="dec-fill" style="width:{{ [d.contribution * 1.5, 100] | min }}%"></div>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <!-- Counterfactual reasoning -->
-    <div class="xai-card">
-      <h3><span class="icon">🔄</span> Counterfactual Reasoning</h3>
-      <p style="font-size:.8rem;color:var(--muted);margin:0 0 .9rem">"What would need to change for a different diagnosis?"</p>
-      <ul class="cf-list">
-        {% for cf in xai.counterfactuals %}
-        <li>{{ cf }}</li>
-        {% endfor %}
-      </ul>
-    </div>
-
     <!-- Feature importance -->
     <div class="xai-card">
-      <h3><span class="icon">📈</span> Image Feature Importance</h3>
-      <p style="font-size:.8rem;color:var(--muted);margin:0 0 1rem">Relative contribution of image-level features derived from colour channel analysis.</p>
+      <h3><span class="icon">📈</span> Image Feature Measurements</h3>
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 1rem">Normalized image measurements derived from colour channels; these are not model feature contributions.</p>
       {% for name, val in xai.channel.feature_importance.items() %}
       <div class="fi-row">
         <div class="fi-label">
@@ -307,7 +279,7 @@
             {{ '⚠ Detected' if xai.lesions.microaneurysms.detected else '✓ Not detected' }}
           </div>
           {% if xai.lesions.microaneurysms.detected %}
-          <div class="lesion-conf">~{{ xai.lesions.microaneurysms.count }} found · conf {{ (xai.lesions.microaneurysms.confidence*100)|round }}%</div>
+          <div class="lesion-conf">~{{ xai.lesions.microaneurysms.count }} found · heuristic score {{ (xai.lesions.microaneurysms.confidence*100)|round }}%</div>
           {% endif %}
         </div>
         <div class="lesion-item">
@@ -316,7 +288,7 @@
             {{ '⚠ Detected' if xai.lesions.haemorrhages.detected else '✓ Not detected' }}
           </div>
           {% if xai.lesions.haemorrhages.detected %}
-          <div class="lesion-conf">~{{ xai.lesions.haemorrhages.count }} regions · conf {{ (xai.lesions.haemorrhages.confidence*100)|round }}%</div>
+          <div class="lesion-conf">~{{ xai.lesions.haemorrhages.count }} regions · heuristic score {{ (xai.lesions.haemorrhages.confidence*100)|round }}%</div>
           {% endif %}
         </div>
         <div class="lesion-item">
@@ -325,7 +297,7 @@
             {{ '⚠ Detected' if xai.lesions.exudates.detected else '✓ Not detected' }}
           </div>
           {% if xai.lesions.exudates.detected %}
-          <div class="lesion-conf">~{{ xai.lesions.exudates.count }} clusters · conf {{ (xai.lesions.exudates.confidence*100)|round }}%</div>
+          <div class="lesion-conf">~{{ xai.lesions.exudates.count }} clusters · heuristic score {{ (xai.lesions.exudates.confidence*100)|round }}%</div>
           {% endif %}
         </div>
         <div class="lesion-item">
@@ -333,7 +305,7 @@
           <div class="lesion-status {{ 'detected' if xai.lesions.optic_disc.detected else 'not-detected' }}">
             {{ '✓ Located' if xai.lesions.optic_disc.detected else '? Not located' }}
           </div>
-          <div class="lesion-conf">conf {{ (xai.lesions.optic_disc.confidence*100)|round }}%</div>
+          <div class="lesion-conf">heuristic score {{ (xai.lesions.optic_disc.confidence*100)|round }}%</div>
         </div>
         <div class="lesion-item" style="grid-column:1/-1">
           <div class="lesion-name">Neovascularisation (PDR risk)</div>

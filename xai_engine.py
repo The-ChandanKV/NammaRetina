@@ -490,32 +490,19 @@ def explain_prediction(
         logger.warning("XAI channel analysis failed: %s", exc)
         channel = {"feature_importance": {}}
 
-    try:
-        decomposition = decompose_confidence(severity, confidence, lesions, channel)
-    except Exception as exc:
-        logger.warning("XAI decomposition failed: %s", exc)
-        decomposition = []
-
-    try:
-        counterfactuals = generate_counterfactuals(severity, lesions)
-    except Exception as exc:
-        logger.warning("XAI counterfactuals failed: %s", exc)
-        counterfactuals = []
-
-    try:
-        narrative = generate_xai_narrative(severity, confidence, lesions, channel, saliency)
-    except Exception as exc:
-        logger.warning("XAI narrative failed: %s", exc)
-        narrative = "<p>XAI narrative unavailable.</p>"
-
-    if not probabilities or all(p == 0 for p in probabilities):
-        base = [0.05] * 5
-        base[severity] = confidence
-        remaining = (1.0 - confidence) * 0.95
-        for i in range(5):
-            if i != severity:
-                base[i] = remaining / 4
-        probabilities = base
+    # Image heuristics are independent observations, not model attributions.
+    decomposition = []
+    counterfactuals = []
+    narrative = (
+        f"<p>The recorded classifier output is <strong>{DR_CLASSES.get(severity, 'Unknown')}</strong> "
+        f"with a score of {confidence * 100:.1f}%. This score is not a calibrated probability of disease.</p>"
+        "<p>The image measurements below use classical image processing. They do not establish "
+        "which lesions caused the classifier output or how the classifier would respond to an edited image.</p>"
+    )
+    if probabilities is None or len(probabilities) != 5:
+        probabilities = []
+    elif any(not np.isfinite(p) or p < 0 or p > 1 for p in probabilities) or not np.isclose(sum(probabilities), 1, atol=0.01):
+        probabilities = []
 
     prob_chart = [
         {

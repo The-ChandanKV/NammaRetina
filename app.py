@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import secrets
+import json
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -23,6 +25,7 @@ from flask import (
     send_file,
     session,
     url_for,
+    abort,
 )
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -50,6 +53,8 @@ from database import (
     exchange_oauth_code,
     get_user_from_access_token,
     get_or_create_sso_user,
+    download_storage_file,
+    get_report,
 )
 from gradcam import generate_gradcam
 from llm_agent import explain_report
@@ -73,15 +78,28 @@ app = Flask(
     template_folder=config.TEMPLATE_DIR,
     static_folder=config.STATIC_DIR,
 )
-app.secret_key = config.SECRET_KEY
+app.secret_key = secrets.token_hex(32) if config.SECRET_KEY_IS_DEFAULT else config.SECRET_KEY
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = bool(os.getenv("RENDER"))
 app.config["MAX_CONTENT_LENGTH"] = config.MAX_CONTENT_LENGTH
 app.config["TEMPLATES_AUTO_RELOAD"] = True  # always read templates fresh from disk
+
+
+@app.after_request
+def response_headers(response):
+    response.headers["X-App-Revision"] = os.getenv("RENDER_GIT_COMMIT", "local")
+    if request.endpoint != "static":
+        response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    return response
 
 if config.SECRET_KEY_IS_DEFAULT:
     logger.warning(
         "SECRET_KEY is the built-in development default. Set the SECRET_KEY "
         "environment variable to a random secret before deploying — sessions "
-        "signed with the default key are trivially forgeable."
+        "A temporary random session key is being used for this process."
     )
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "tiff", "tif"}
@@ -97,6 +115,52 @@ for d in [UPLOAD_DIR, HEATMAP_DIR, REPORT_DIR, SIMULATION_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 
+@app.before_request
+def protect_requests():
+    # Flask's built-in static endpoint must never expose patient artifacts.
+    if request.endpoint == "static":
+        filename = request.view_args.get("filename", "")
+        if not filename.startswith("css/") or ".." in Path(filename).parts:
+            abort(404)
+    if request.method == "POST":
+        expected = session.get("csrf_token", "")
+        supplied = request.form.get("csrf_token", "")
+        if not expected or not secrets.compare_digest(expected, supplied):
+            abort(400, description="Your form expired. Reload the page and try again.")
+
+
+@app.route("/health")
+def health():
+    from model_loader import is_model_available
+    return {"status": "ok", "model_available": is_model_available(),
+            "revision": os.getenv("RENDER_GIT_COMMIT", "local")}
+
+
+@app.context_processor
+def form_tokens():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    return {"csrf_token": session["csrf_token"]}
+
+
+def resolve_artifact(storage_path, directory):
+    """Resolve legacy files locally or restore a Supabase artifact after restart."""
+    if not storage_path or str(storage_path) == "None":
+        return None
+    normalised = str(storage_path).replace("\\", "/")
+    name = Path(normalised).name
+    target = Path(directory) / name
+    for candidate in (target, BASE_DIR / normalised):
+        if candidate.is_file() and candidate.resolve().is_relative_to(BASE_DIR.resolve()):
+            return str(candidate)
+    if normalised.split("/", 1)[0] in {BUCKET_IMAGES, BUCKET_HEATMAPS, BUCKET_REPORTS}:
+        try:
+            return download_storage_file(normalised, target)
+        except Exception:
+            logger.warning("Could not restore artifact from storage", exc_info=True)
+    return None
+
+
 def _allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -105,6 +169,8 @@ def db_path_to_url(rel_path: str | None) -> str:
     """Convert a DB-stored relative path like 'static\\uploads\\file.png' into a URL."""
     if not rel_path:
         return url_for("serve_file", subdir="placeholder", filename="none.svg")
+    if str(rel_path).split("/", 1)[0] in {BUCKET_IMAGES, BUCKET_HEATMAPS, BUCKET_REPORTS}:
+        return storage_path_to_signed_url(rel_path) or ""
     normalised = str(rel_path).replace("\\", "/")
     if normalised.startswith("static/"):
         normalised = normalised[len("static/"):]
@@ -139,6 +205,10 @@ def login_required(view):
 @app.route("/register", methods=["GET", "POST"])
 def register():
     """Create a new account. The first account created becomes the admin."""
+    first_account = count_users() == 0
+    if not first_account and session.get("role") != "admin":
+        flash("Account registration is restricted. Ask your administrator for access.", "warning")
+        return redirect(url_for("login"))
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         email    = request.form.get("email", "").strip().lower()
@@ -158,13 +228,16 @@ def register():
             flash("Passwords do not match.", "danger")
             return redirect(url_for("register"))
 
-        role = "admin" if count_users() == 0 else "doctor"
+        role = "admin" if first_account else "doctor"
         try:
             user_id = create_user(username, password, email=email, role=role)
         except Exception as exc:
             flash(f"Registration failed: {exc}", "danger")
             return redirect(url_for("register"))
 
+        if not first_account:
+            flash(f"Account created for {username}.", "success")
+            return redirect(url_for("dashboard"))
         session.clear()
         session["user_id"] = user_id
         session["username"] = username
@@ -172,7 +245,7 @@ def register():
         flash(f"Welcome, {username}! Your account has been created.", "success")
         return redirect(url_for("index"))
 
-    return render_template("register.html")
+    return render_template("register.html", first_account=first_account)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -200,7 +273,7 @@ def login():
     return render_template("login.html")
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 def logout():
     """Clear the session and return to the login page."""
     session.clear()
@@ -281,6 +354,7 @@ def auth_callback():
         flash(f"Account setup failed: {exc}", "danger")
         return redirect(url_for("login"))
 
+    next_url = session.get("next_url")
     session.clear()
     session["user_id"] = user_record["user_id"]
     session["username"] = user_record["username"]
@@ -288,7 +362,6 @@ def auth_callback():
     session["email"] = user_record["email"]
 
     flash(f"Welcome, {user_record['username']}! Signed in with Google.", "success")
-    next_url = session.pop("next_url", None)
     if next_url and next_url.startswith("/") and not next_url.startswith("//"):
         return redirect(next_url)
     return redirect(url_for("index"))
@@ -335,6 +408,14 @@ def upload():
         flash("Age must be a number.", "danger")
         return redirect(url_for("index"))
 
+    if not 0 <= age <= 150 or gender not in {"Male", "Female", "Other"}:
+        flash("Please provide a valid age and gender.", "danger")
+        return redirect(url_for("index"))
+
+    patient_id = request.form.get("patient_id", type=int)
+    if request.form.get("patient_id") and (not patient_id or not get_patient(patient_id)):
+        abort(404)
+
     today_str = datetime.now().strftime("%Y-%m-%d")
     upload_path: Path | None = None
 
@@ -342,7 +423,7 @@ def upload():
         # --- 2. Save uploaded image ----------------------------------------
         safe_name = secure_filename(file.filename)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        upload_filename = f"{timestamp}_{safe_name}"
+        upload_filename = f"{timestamp}_{secrets.token_hex(12)}_{safe_name}"
         upload_path = UPLOAD_DIR / upload_filename
         file.save(str(upload_path))
         logger.info("Image saved: %s", upload_path)
@@ -360,17 +441,12 @@ def upload():
             flash("The uploaded file is not a valid image.", "danger")
             return redirect(url_for("index"))
 
-        # --- 3. Create or find patient -------------------------------------
-        patient_id = add_patient(
-            name=name,
-            age=age,
-            gender=gender,
-            diabetes_history=diabetes_history if diabetes_history else "Not provided",
-        )
-        logger.info("Patient created/found with ID %d", patient_id)
-
         # --- 4. Model prediction -------------------------------------------
         prediction = predict_severity(str(upload_path))
+        if not prediction["model_used"]:
+            upload_path.unlink(missing_ok=True)
+            flash("Analysis unavailable: the trained model is not loaded. No diagnosis or visit was recorded.", "warning")
+            return redirect(url_for("index"))
         severity = prediction["severity"]
         confidence = prediction["confidence"]
         severity_label = prediction["severity_label"]
@@ -390,21 +466,26 @@ def upload():
         )
         logger.info("Heatmap saved: %s", heatmap_path)
 
+        if not patient_id:
+            patient_id = add_patient(name=name, age=age, gender=gender,
+                                     diabetes_history=diabetes_history or "Not provided")
+
         # --- 6. Treatment recommendation -----------------------------------
         recommendation = get_treatment_recommendation(severity)
         logger.info("Recommendation: %s", recommendation)
 
         # --- 7. Upload files to Supabase Storage & save report -------------
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        img_remote = f"uploads/{timestamp}_{upload_filename}"
-        heat_remote = f"heatmaps/{timestamp}_{Path(heatmap_path).name}"
+        img_remote = f"uploads/{upload_filename}"
+        heat_remote = f"heatmaps/{Path(heatmap_path).name}" if heatmap_path else None
 
         upload_file(str(upload_path), BUCKET_IMAGES, img_remote)
-        upload_file(heatmap_path, BUCKET_HEATMAPS, heat_remote)
+        if heatmap_path:
+            upload_file(heatmap_path, BUCKET_HEATMAPS, heat_remote)
 
         # Store bucket-prefixed paths so we can later generate signed URLs
         image_storage = f"{BUCKET_IMAGES}/{img_remote}"
-        heatmap_storage = f"{BUCKET_HEATMAPS}/{heat_remote}"
+        heatmap_storage = f"{BUCKET_HEATMAPS}/{heat_remote}" if heat_remote else ""
 
         report_id = add_report(
             patient_id=patient_id,
@@ -419,7 +500,7 @@ def upload():
         logger.info("Report saved with ID %d", report_id)
 
         # --- 8. Progression tracking ---------------------------------------
-        progression_result = track_progression(patient_id, severity, visit_date=today_str)
+        progression_result = track_progression(patient_id, severity, visit_date=today_str, report_id=report_id)
         progression_status = progression_result["status"]
         logger.info("Progression status: %s", progression_status)
 
@@ -434,7 +515,7 @@ def upload():
         # --- 10. Simulation (only if progression history exists) ------------
         simulation_path = None
         history = get_progression_history(patient_id)
-        if history and len(history) > 0:
+        if history and len(history) > 1 and heatmap_path:
             try:
                 sim_result = simulate_progression(
                     image_path=str(upload_path),
@@ -445,6 +526,18 @@ def upload():
                 logger.info("Simulation saved: %s", simulation_path)
             except Exception as exc:
                 logger.warning("Simulation failed: %s", exc)
+
+        if simulation_path:
+            try:
+                upload_file(simulation_path, BUCKET_REPORTS, f"simulations/{Path(simulation_path).name}")
+            except Exception:
+                logger.warning("Simulation persistence unavailable", exc_info=True)
+        probabilities_path = REPORT_DIR / f"probabilities_{report_id}.json"
+        probabilities_path.write_text(json.dumps(prediction["probabilities"]))
+        try:
+            upload_file(str(probabilities_path), BUCKET_REPORTS, f"metadata/{probabilities_path.name}")
+        except Exception:
+            logger.warning("Probability metadata persistence unavailable", exc_info=True)
 
         # --- 11. LLM explanation -------------------------------------------
         llm_summary = explain_report(severity, confidence, progression_status)
@@ -515,11 +608,14 @@ def result(report_id: int):
             (report["patient_id"],),
         ).fetchall()
 
-        # Determine latest progression status
-        if progression:
-            latest_status = progression[-1]["status"]
-        else:
-            latest_status = "Initial"
+        # A historical report describes the change at that visit, not today's latest visit.
+        reports = get_reports_for_patient(report["patient_id"])
+        prior = [r for r in reports if (str(r["date"]), r["report_id"]) <
+                 (str(report["date"]), report_id) and float(r.get("confidence") or 0) > 0]
+        latest_status = "Initial"
+        if prior and float(report.get("confidence") or 0) > 0:
+            difference = int(report["severity"]) - int(prior[-1]["severity"])
+            latest_status = "Worsened" if difference > 0 else "Improved" if difference < 0 else "Stable"
 
     finally:
         conn.close()
@@ -529,8 +625,8 @@ def result(report_id: int):
     confidence_pct = round(float(report["confidence"]) * 100, 1)
 
     # Generate signed URLs from Supabase Storage
-    image_url   = storage_path_to_signed_url(report.get("image_path")) or ""
-    heatmap_url = storage_path_to_signed_url(report.get("heatmap_path")) or ""
+    image_url = db_path_to_url(report.get("image_path"))
+    heatmap_url = db_path_to_url(report["heatmap_path"]) if report.get("heatmap_path") else ""
 
     # Progression graph — still served locally (generated at runtime)
     progression_graph = Path(config.BASE_DIR) / "reports" / f"progression_{report['patient_id']}.png"
@@ -546,16 +642,22 @@ def result(report_id: int):
     image_path = report.get("image_path", "")
     if image_path:
         sim_filename = f"{Path(str(image_path).split('/')[-1]).stem}_simulation.png"
+        # Older uploads used a second timestamp only in their remote object name.
+        if len(sim_filename) > 32 and sim_filename[:8].isdigit() and sim_filename[16:24].isdigit():
+            sim_filename = sim_filename[16:]
         sim_path = Path(config.SIMULATION_DIR) / sim_filename
-        if sim_path.exists():
+        if sim_path.exists() or (image_path and len(progression) > 1 and report.get("heatmap_path")):
             simulation_url = url_for("serve_file", subdir="simulations", filename=sim_filename)
 
     # Check for PDF in Supabase Storage or locally
-    pdf_exists = (Path(config.REPORT_DIR) / f"report_{report_id}.pdf").exists()
+    pdf_exists = True  # PDFs can be restored from private storage after a restart.
 
     # A confidence of 0 means no real model ran (see model_loader fallback); the
     # template shows "N/A" rather than a fabricated 0.0% in that case.
     model_used = float(report["confidence"]) > 0
+    if not model_used:
+        severity_label = "Analysis unavailable"
+        latest_status = "Unavailable"
 
     return render_template(
         "result.html",
@@ -564,8 +666,8 @@ def result(report_id: int):
         severity=severity,
         severity_label=severity_label,
         confidence_pct=confidence_pct,
-        recommendation=report["recommendation"],
-        llm_summary=report["llm_summary"],
+        recommendation=report["recommendation"] if model_used else "A new scan analysis with a loaded model is required.",
+        llm_summary=report["llm_summary"] if model_used else "No model prediction was made for this record. It cannot establish severity or progression.",
         progression_status=latest_status,
         progression=progression,
         image_url=image_url,
@@ -600,25 +702,11 @@ def xai_explain(report_id: int):
     finally:
         conn.close()
 
-    # Resolve absolute paths for the XAI engine
-    base = Path(config.BASE_DIR)
-    image_rel = str(report["image_path"]).replace("\\", "/")
-    heatmap_rel = str(report["heatmap_path"]).replace("\\", "/")
-
-    # Try several path resolution strategies (same logic as serve_file)
-    def _resolve(rel):
-        for candidate in [
-            base / rel,
-            Path(config.STATIC_DIR) / Path(rel).name,
-            Path(config.UPLOAD_DIR) / Path(rel).name,
-            Path(config.HEATMAP_DIR) / Path(rel).name,
-        ]:
-            if candidate.exists():
-                return str(candidate)
-        return None
-
-    abs_image = _resolve(image_rel)
-    abs_heatmap = _resolve(heatmap_rel)
+    if float(report.get("confidence") or 0) <= 0:
+        flash("No prediction is available to explain for this report.", "warning")
+        return redirect(url_for("result", report_id=report_id))
+    abs_image = resolve_artifact(report["image_path"], UPLOAD_DIR)
+    abs_heatmap = resolve_artifact(report["heatmap_path"], HEATMAP_DIR)
 
     if not abs_image:
         flash("Original image not found on disk — XAI requires the source image.", "warning")
@@ -627,13 +715,20 @@ def xai_explain(report_id: int):
     severity = int(report["severity"])
     confidence = float(report["confidence"])
 
-    # Run all XAI components
+    probabilities = None
+    metadata = resolve_artifact(f"{BUCKET_REPORTS}/metadata/probabilities_{report_id}.json", REPORT_DIR)
+    if metadata:
+        try:
+            probabilities = json.loads(Path(metadata).read_text())
+        except (ValueError, OSError):
+            logger.warning("Stored probability metadata is unavailable")
+    # Run image analysis using only recorded model outputs.
     xai = explain_prediction(
         image_path=abs_image,
         heatmap_path=abs_heatmap,
         severity=severity,
         confidence=confidence,
-        probabilities=None,
+        probabilities=probabilities,
     )
 
     image_url = db_path_to_url(report["image_path"])
@@ -677,8 +772,10 @@ def dashboard():
 
             latest_status = progression[0]["status"] if progression else "No scans"
             latest_severity = None
-            if reports:
+            if reports and float(reports[0].get("confidence") or 0) > 0:
                 latest_severity = int(reports[0]["severity"])
+            elif reports:
+                latest_status = "Unavailable"
 
             patient_data.append({
                 "patient": p,
@@ -747,11 +844,15 @@ def regenerate_report(report_id: int):
         return redirect(url_for("dashboard"))
     patient = get_patient(report["patient_id"])
     severity = int(report["severity"])
+    if float(report.get("confidence") or 0) <= 0:
+        flash("This record has no model prediction. Please run a new analysis before generating a diagnostic PDF.", "warning")
+        return redirect(url_for("result", report_id=report_id))
     base = Path(config.BASE_DIR)
     graph = base / "reports" / f"progression_{report['patient_id']}.png"
     sim = Path(config.SIMULATION_DIR) / f"{Path(str(report['image_path'])).stem}_simulation.png"
     try:
-        generate_pdf(
+        heatmap = resolve_artifact(report["heatmap_path"], HEATMAP_DIR)
+        pdf_path = generate_pdf(
             report_id=report_id,
             patient={k: patient[k] for k in ("name", "age", "gender", "diabetes_history")},
             severity=severity,
@@ -759,12 +860,13 @@ def regenerate_report(report_id: int):
             confidence=float(report["confidence"]),
             recommendation=report["recommendation"],
             llm_summary=report["llm_summary"],
-            heatmap_path=str(base / str(report["heatmap_path"]).replace("\\", "/")),
+            heatmap_path=heatmap,
             progression_graph_path=str(graph) if graph.exists() else None,
             simulation_path=str(sim) if sim.exists() else None,
             report_date=str(report["date"]),
             output_dir=str(REPORT_DIR),
         )
+        upload_file(pdf_path, BUCKET_REPORTS, f"pdfs/report_{report_id}.pdf")
         flash("PDF report regenerated.", "success")
     except Exception as exc:
         logger.exception("PDF regeneration failed")
@@ -776,7 +878,18 @@ def regenerate_report(report_id: int):
 @login_required
 def download_report(report_id: int):
     """Download the generated PDF report."""
+    report = get_report(report_id)
+    if report is None:
+        abort(404)
+    if float(report.get("confidence") or 0) <= 0:
+        flash("This record has no valid model prediction. A diagnostic PDF is unavailable.", "warning")
+        return redirect(url_for("result", report_id=report_id))
     pdf_path = Path(config.REPORT_DIR) / f"report_{report_id}.pdf"
+    if not pdf_path.exists():
+        restored = resolve_artifact(f"{BUCKET_REPORTS}/pdfs/report_{report_id}.pdf", REPORT_DIR)
+        if restored:
+            pdf_path = Path(restored)
+
     if not pdf_path.exists():
         # Try the non-static reports dir as well
         pdf_path = Path(config.BASE_DIR) / "reports" / f"report_{report_id}.pdf"
@@ -799,6 +912,14 @@ def serve_file(subdir: str, filename: str):
     """Serve files — tries Supabase Storage signed URL first, then local fallback."""
     from flask import Response, redirect as flask_redirect
     safe_filename = secure_filename(filename)
+    if subdir not in {"uploads", "heatmaps", "reports", "simulations", "placeholder"}:
+        abort(404)
+
+    # Graphs are regenerated from current records and must be served locally first.
+    if subdir == "reports" and safe_filename.startswith("progression_"):
+        graph = BASE_DIR / "reports" / safe_filename
+        if graph.is_file():
+            return send_file(str(graph))
 
     # Supabase Storage bucket mapping
     bucket_map = {

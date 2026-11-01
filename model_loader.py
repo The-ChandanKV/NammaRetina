@@ -125,7 +125,8 @@ def preprocess_image(image_path: str) -> np.ndarray:
     img = cv2.imread(image_path)
     if img is None:
         raise FileNotFoundError(f"Cannot read image: {image_path}")
-    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+    from retinal_preprocessing import prepare_retina
+    img = prepare_retina(img, IMG_SIZE)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = img.astype(np.float32) / 127.5 - 1.0
     return np.expand_dims(img, axis=0)
@@ -146,6 +147,11 @@ def predict_severity(image_path: str) -> dict:
     if model is not None:
         img = preprocess_image(image_path)
         predictions = model.predict(img, verbose=0)
+        predictions = np.asarray(predictions)
+        if predictions.shape != (1, NUM_CLASSES) or not np.all(np.isfinite(predictions)):
+            raise ValueError("The model returned an invalid classification output.")
+        if np.any(predictions < 0) or np.any(predictions > 1) or not np.isclose(predictions[0].sum(), 1, atol=0.01):
+            raise ValueError("The model returned invalid class probabilities.")
         probabilities = predictions[0].tolist()
         severity = int(np.argmax(probabilities))
         confidence = float(probabilities[severity])
@@ -157,10 +163,10 @@ def predict_severity(image_path: str) -> dict:
             "model_used": True,
         }
 
-    logger.warning("No trained model available — returning neutral fallback (no prediction).")
+    logger.warning("No trained model available — analysis is unavailable.")
     return {
-        "severity": 0,
-        "severity_label": DR_CLASSES.get(0, "Unknown"),
+        "severity": None,
+        "severity_label": "Analysis unavailable",
         "confidence": 0.0,
         "probabilities": [0.0] * NUM_CLASSES,
         "model_used": False,

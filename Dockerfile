@@ -1,3 +1,12 @@
+# ── Frontend (Vite landing page) ─────────────────────────────────────────────
+FROM node:22-bookworm-slim AS landing
+WORKDIR /app/landing-source
+COPY landing-source/package.json landing-source/package-lock.json* ./
+RUN npm install
+COPY landing-source/ ./
+RUN npm run build
+
+# ── Backend (Flask + ML) ─────────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -21,7 +30,9 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-# Writable dirs for generated artifacts (Supabase Storage is preferred in prod)
+# Overlay freshly built public landing assets (do not ship PHI here)
+COPY --from=landing /app/static/landing /app/static/landing
+
 RUN mkdir -p models static/uploads static/heatmaps static/reports static/simulations
 
 EXPOSE 8080

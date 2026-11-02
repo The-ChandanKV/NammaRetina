@@ -26,6 +26,8 @@ static/simulations/*
 !static/heatmaps/.gitkeep
 !static/reports/.gitkeep
 !static/simulations/.gitkeep
+landing-source/node_modules
+landing-source/.git
 Colab Notebooks
 MAJORR_MAY.pdf
 *.log

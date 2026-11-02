@@ -5,6 +5,7 @@
   <div class="card auth-card">
     <h1 class="gradient-text">Welcome back</h1>
     <p class="muted">Sign in to access patient scans and reports.</p>
+    <p class="note" style="margin-top:0.25rem"><a href="{{ url_for('landing') }}">← Back to NammaRetina home</a></p>
 
     <a href="{{ url_for('auth_google') }}" class="sso-btn" id="googleLoginBtn">
       <svg viewBox="0 0 24 24" width="20" height="20">

@@ -4,6 +4,11 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Frontend
+landing-source/node_modules/
+landing-source/dist/
+landing-source/.git/
+
 # Virtual Environment
 venv/
 .venv/

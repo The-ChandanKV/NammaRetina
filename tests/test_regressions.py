@@ -88,7 +88,7 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
 
     def test_anonymous_routes_require_login(self):
-        for path in ["/dashboard", "/result/7", "/xai/7", "/download/7", "/files/uploads/scan.png"]:
+        for path in ["/scan", "/dashboard", "/result/7", "/xai/7", "/download/7", "/files/uploads/scan.png"]:
             self.assertEqual(self.client.get(path).status_code, 302)
 
     def test_csrf_rejects_missing_and_invalid_token(self):
@@ -267,8 +267,21 @@ class RegressionTests(unittest.TestCase):
     def test_followup_form_contains_patient_id(self):
         self.login()
         self.patch(web, "get_patient", return_value=self.patient)
-        response = self.client.get("/?patient_id=5")
+        response = self.client.get("/scan?patient_id=5")
         self.assertIn(b'name="patient_id" value="5"', response.data)
+
+    def test_public_landing_and_scan_auth(self):
+        landing = self.client.get("/")
+        self.assertEqual(landing.status_code, 200)
+        self.assertIn(b"NammaRetina", landing.data)
+        self.assertEqual(self.client.get("/scan").status_code, 302)
+        self.login()
+        scan = self.client.get("/scan")
+        self.assertEqual(scan.status_code, 200)
+        self.assertIn(b"uploadForm", scan.data)
+        # Private artifacts must not be reachable via /landing/
+        self.assertEqual(self.client.get("/landing/../uploads/scan.png").status_code, 404)
+        self.assertEqual(self.client.get("/static/landing/index.html").status_code, 404)
 
     def test_descending_progression_and_ties(self):
         query = Mock()

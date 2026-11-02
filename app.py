@@ -23,6 +23,7 @@ from flask import (
     render_template,
     request,
     send_file,
+    send_from_directory,
     session,
     url_for,
     abort,
@@ -92,8 +93,10 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True  # always read templates fresh from d
 @app.after_request
 def response_headers(response):
     response.headers["X-App-Revision"] = os.getenv("RENDER_GIT_COMMIT", "local")
-    if request.endpoint != "static":
-        response.headers["Cache-Control"] = "no-store"
+    # Landing assets set their own Cache-Control; do not overwrite with no-store.
+    if request.endpoint not in {"static", "landing_assets", "landing"}:
+        if "Cache-Control" not in response.headers:
+            response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "same-origin"
     return response
@@ -117,12 +120,18 @@ SIMULATION_DIR = Path(config.SIMULATION_DIR)
 for d in [UPLOAD_DIR, HEATMAP_DIR, REPORT_DIR, SIMULATION_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+# Public landing-page build output (Vite → static/landing/). Never put PHI here.
+LANDING_DIR = Path(config.STATIC_DIR) / "landing"
+
 
 @app.before_request
 def protect_requests():
     # Flask's built-in static endpoint must never expose patient artifacts.
+    # Landing assets are served only via /landing/* (see landing_assets).
     if request.endpoint == "static":
         filename = request.view_args.get("filename", "")
+        if filename.startswith("landing/"):
+            abort(404)
         if not filename.startswith("css/") or ".." in Path(filename).parts:
             abort(404)
     if request.method == "POST":
@@ -295,10 +304,10 @@ def login():
 
 @app.route("/logout", methods=["POST"])
 def logout():
-    """Clear the session and return to the login page."""
+    """Clear the session and return to the public landing page."""
     session.clear()
     flash("You have been logged out.", "success")
-    return redirect(url_for("login"))
+    return redirect(url_for("landing"))
 
 
 @app.route("/auth/google")
@@ -388,9 +397,60 @@ def auth_callback():
 
 
 @app.route("/")
+def landing():
+    """Public Vite landing page (no authentication)."""
+    index_html = LANDING_DIR / "index.html"
+    if not index_html.is_file():
+        logger.error("Landing build missing at %s — run: cd landing-source && npm run build", LANDING_DIR)
+        flash(
+            "Landing page assets are not built yet. Open /login to continue, "
+            "or build with: cd landing-source && npm install && npm run build",
+            "warning",
+        )
+        return redirect(url_for("login"))
+    response = send_from_directory(LANDING_DIR, "index.html")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.route("/favicon.ico")
+def favicon():
+    """Browsers request /favicon.ico by default — serve the NammaRetina mark."""
+    icon = LANDING_DIR / "favicon.ico"
+    if not icon.is_file():
+        abort(404)
+    response = send_from_directory(LANDING_DIR, "favicon.ico")
+    response.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    return response
+
+
+@app.route("/landing/<path:filename>")
+def landing_assets(filename: str):
+    """Serve only compiled public landing assets (JS/CSS/images/fonts)."""
+    if ".." in Path(filename).parts:
+        abort(404)
+    target = (LANDING_DIR / filename).resolve()
+    try:
+        target.relative_to(LANDING_DIR.resolve())
+    except ValueError:
+        abort(404)
+    if not target.is_file():
+        abort(404)
+    response = send_from_directory(LANDING_DIR, filename)
+    # Favicons must not be immutable-cached (browsers retain stale tab icons).
+    name = Path(filename).name.lower()
+    if name.startswith("favicon") or name.endswith(".ico"):
+        response.headers["Cache-Control"] = "no-cache, max-age=0, must-revalidate"
+    else:
+        # Fingerprinted Vite assets (JS/CSS/images with hashes) can be cached long-term.
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
+
+@app.route("/scan")
 @login_required
 def index():
-    """Home page — upload form with patient details (optionally prefilled)."""
+    """Authenticated retinal upload form (endpoint name kept as ``index``)."""
     prefill = None
     pid = request.args.get("patient_id", type=int)
     if pid:

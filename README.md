@@ -46,18 +46,31 @@ Place a selected model at `models/efficientnetb0_dr.keras`, or configure `MODEL_
 and `MODEL_SHA256` for a verified download on Render. The app can start without
 weights, but cannot record diagnoses until a real model loads.
 
-### 4. Run the application
+### 4. Build the public landing page (required once / after UI changes)
+
+The public landing page lives in `landing-source/` and compiles to `static/landing/`:
+
+```bash
+cd landing-source
+npm install
+npm run build
+cd ..
+```
+
+Docker builds this automatically during image creation. Locally, rebuild whenever you change landing components.
+
+### 5. Run the application
 
 ```bash
 python app.py
 ```
 
-Then open **http://localhost:5001** in your browser.
+Then open **http://localhost:5001** — the public landing page loads at `/`. Use **Doctor Sign In** for the clinical app.
 
-### 5. Create your account
+### 6. Create your account
 
-The dashboard and all patient data are behind a login. On first run, open the app and click
-**Create one** on the sign-in page to register. **The first account created becomes the admin.** After setup, an administrator must create additional
+The dashboard and all patient data are behind a login. On first run, open `/login` and use
+**Account setup** to register. **The first account created becomes the admin.** After setup, an administrator must create additional
 accounts using **Add account**. Google sign-in is available to provisioned users. Approved clinicians
 share the care-team dashboard; patient assignments and organization isolation are not implemented.
 
@@ -85,19 +98,28 @@ When you upload a retinal image through the web interface, the following pipelin
 
 ## Web Routes
 
-All routes except `/login` and `/register` require an authenticated session.
-
 | Route | Method | Auth | Description |
 |---|---|---|---|
-| `/register` | GET/POST | Public | Create an account (first user becomes admin) |
-| `/login` | GET/POST | Public | Sign in |
-| `/logout` | POST | — | Sign out |
-| `/` | GET | Required | Upload form with patient details |
+| `/` | GET | Public | Premium landing page (Vite build in `static/landing/`) |
+| `/landing/<path>` | GET | Public | Landing JS/CSS/images only (no patient files) |
+| `/login` | GET/POST | Public | Doctor sign-in (existing Flask auth) |
+| `/register` | GET/POST | Public* | First-user bootstrap / admin account creation |
+| `/logout` | POST | — | Sign out → returns to landing |
+| `/scan` | GET | Required | Retinal upload form (endpoint name: `index`) |
 | `/upload` | POST | Required | Runs the full diagnostic pipeline |
 | `/result/<report_id>` | GET | Required | Displays the diagnostic result |
 | `/dashboard` | GET | Required | Doctor dashboard — all patients and reports |
 | `/download/<report_id>` | GET | Required | Downloads the PDF report |
 | `/files/<subdir>/<filename>` | GET | Required | Serves uploaded images, heatmaps, and simulations |
+
+\*Public registration is locked after the first admin account exists.
+
+### Landing ↔ Flask integration
+
+- Source: `landing-source/` (React + Vite + Tailwind)
+- Build output: `static/landing/` (committed or produced in Docker)
+- Doctor Sign In uses a real `<a href="/login">` so Flask handles authentication
+- `/static/uploads|heatmaps|reports|simulations` remain blocked; only `/static/css/*` and `/landing/*` are public
 
 ---
 

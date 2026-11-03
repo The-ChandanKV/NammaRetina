@@ -29,7 +29,7 @@
   </div>
   <div class="table-wrap">
   <table id="patientTable">
-    <thead><tr><th>Patient</th><th>Age / Sex</th><th>Scans</th><th>Latest severity</th><th>Progression</th><th>Last scan</th><th></th></tr></thead>
+    <thead><tr><th>Patient</th><th>Age / Sex</th><th>Scans</th><th>Latest severity</th><th>Progression</th><th>Summary</th><th>Last scan</th><th></th></tr></thead>
     <tbody>
     {% for item in patient_data %}
     <tr data-name="{{ item.patient.name|lower }} {{ item.patient.patient_id }}" data-sev="{{ item.latest_severity if item.latest_severity is not none else '' }}">
@@ -39,6 +39,7 @@
       <td>{{ item.reports|length }}</td>
       <td>{% if item.latest_severity is not none %}<span class="sev sev-{{ item.latest_severity }}">{{ item.latest_severity_label }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td><span class="status status-{{ item.latest_status }}">{{ item.latest_status }}</span></td>
+      <td>{{ item.summary }}</td>
       <td class="muted">{{ item.reports[0].date if item.reports else '—' }}</td>
       <td style="text-align:right;white-space:nowrap">
         <a class="btn btn-sm" href="{{ url_for('patient_detail', patient_id=item.patient.patient_id) }}">Open</a>

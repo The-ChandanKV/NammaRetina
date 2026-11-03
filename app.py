@@ -1024,6 +1024,87 @@ def evaluation_dashboard():
     )
 
 
+def _patient_status_summary(
+    latest_severity: int | None,
+    latest_status: str,
+    n_reports: int,
+) -> str:
+    """Short 3–4 word clinical status line for patient lists."""
+    if n_reports <= 0 or latest_status == "No scans":
+        return "Awaiting first scan"
+    if latest_severity is None or latest_status == "Unavailable":
+        return "Analysis not available"
+    grade = {
+        0: "No DR",
+        1: "Mild DR",
+        2: "Moderate DR",
+        3: "Severe DR",
+        4: "Proliferative DR",
+    }.get(int(latest_severity), "Unknown grade")
+    if latest_status == "Worsened":
+        return f"{grade} — worsening"
+    if latest_status == "Improved":
+        return f"{grade} — improving"
+    if latest_status == "Stable":
+        return f"{grade} — stable"
+    return f"{grade} — initial"
+
+
+def _build_patient_directory() -> list[dict]:
+    """Load all patients with latest severity, progression status, and one-liner."""
+    conn = get_connection()
+    try:
+        patients = conn.execute(
+            "SELECT * FROM Patients ORDER BY patient_id DESC"
+        ).fetchall()
+        patient_data = []
+        for p in patients:
+            reports = conn.execute(
+                "SELECT * FROM Reports WHERE patient_id = ? ORDER BY date DESC",
+                (p["patient_id"],),
+            ).fetchall()
+            progression = conn.execute(
+                "SELECT * FROM Progression WHERE patient_id = ? ORDER BY date DESC",
+                (p["patient_id"],),
+            ).fetchall()
+            latest_status = progression[0]["status"] if progression else "No scans"
+            latest_severity = None
+            if reports and float(reports[0].get("confidence") or 0) > 0:
+                latest_severity = int(reports[0]["severity"])
+            elif reports:
+                latest_status = "Unavailable"
+            patient_data.append({
+                "patient": p,
+                "reports": reports,
+                "progression": progression,
+                "latest_status": latest_status,
+                "latest_severity": latest_severity,
+                "latest_severity_label": (
+                    config.DR_CLASSES.get(latest_severity, "N/A")
+                    if latest_severity is not None else "N/A"
+                ),
+                "summary": _patient_status_summary(
+                    latest_severity, latest_status, len(reports)
+                ),
+            })
+        return patient_data
+    finally:
+        conn.close()
+
+
+@app.route("/patients")
+@login_required
+def patients_list():
+    """Directory of all patients with current status and a short summary."""
+    patient_data = _build_patient_directory()
+    return render_template(
+        "patients.html",
+        patient_data=patient_data,
+        dr_classes=config.DR_CLASSES,
+        total_patients=len(patient_data),
+    )
+
+
 @app.route("/reports")
 @login_required
 def reports_list():
@@ -1063,42 +1144,7 @@ def reports_list():
 @login_required
 def dashboard():
     """Doctor dashboard — list all patients and their reports."""
-    conn = get_connection()
-    try:
-        patients = conn.execute(
-            "SELECT * FROM Patients ORDER BY patient_id DESC"
-        ).fetchall()
-
-        patient_data = []
-        for p in patients:
-            reports = conn.execute(
-                "SELECT * FROM Reports WHERE patient_id = ? ORDER BY date DESC",
-                (p["patient_id"],),
-            ).fetchall()
-
-            progression = conn.execute(
-                "SELECT * FROM Progression WHERE patient_id = ? ORDER BY date DESC",
-                (p["patient_id"],),
-            ).fetchall()
-
-            latest_status = progression[0]["status"] if progression else "No scans"
-            latest_severity = None
-            if reports and float(reports[0].get("confidence") or 0) > 0:
-                latest_severity = int(reports[0]["severity"])
-            elif reports:
-                latest_status = "Unavailable"
-
-            patient_data.append({
-                "patient": p,
-                "reports": reports,
-                "progression": progression,
-                "latest_status": latest_status,
-                "latest_severity": latest_severity,
-                "latest_severity_label": config.DR_CLASSES.get(latest_severity, "N/A") if latest_severity is not None else "N/A",
-            })
-    finally:
-        conn.close()
-
+    patient_data = _build_patient_directory()
     stats = {
         "patients": len(patient_data),
         "reports": sum(len(i["reports"]) for i in patient_data),

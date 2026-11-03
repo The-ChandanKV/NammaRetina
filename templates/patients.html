@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Patients{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="page-kicker">Care directory</p>
+    <h1>Patients</h1>
+    <p class="page-sub">All patients with current status and a short clinical summary · {{ total_patients }} total</p>
+  </div>
+  <a id="btn-new-scan" href="{{ url_for('index') }}" class="btn btn-primary">New Screening</a>
+</div>
+
+{% if patient_data %}
+<div class="card">
+  <div class="toolbar">
+    <input id="patientSearch" type="search" placeholder="Search patients by name or ID…">
+    <select id="patientSevFilter" aria-label="Filter by severity">
+      <option value="">All severities</option>
+      {% for k, v in dr_classes.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+      <option value="na">No analysis</option>
+    </select>
+    <select id="patientStatusFilter" aria-label="Filter by progression">
+      <option value="">All statuses</option>
+      <option value="Initial">Initial</option>
+      <option value="Stable">Stable</option>
+      <option value="Improved">Improved</option>
+      <option value="Worsened">Worsened</option>
+      <option value="No scans">No scans</option>
+      <option value="Unavailable">Unavailable</option>
+    </select>
+  </div>
+  <div class="table-wrap">
+    <table id="patientsTable">
+      <thead>
+        <tr>
+          <th>Patient</th>
+          <th>Age / Sex</th>
+          <th>Scans</th>
+          <th>Latest severity</th>
+          <th>Status</th>
+          <th>Summary</th>
+          <th>Last scan</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in patient_data %}
+        <tr
+          data-name="{{ item.patient.name|lower }} {{ item.patient.patient_id }} {{ item.summary|lower }}"
+          data-sev="{{ item.latest_severity if item.latest_severity is not none else 'na' }}"
+          data-status="{{ item.latest_status }}">
+          <td>
+            <span class="avatar">{{ item.patient.name[:1]|upper }}</span>
+            <a href="{{ url_for('patient_detail', patient_id=item.patient.patient_id) }}">{{ item.patient.name }}</a>
+            <span class="muted">#{{ item.patient.patient_id }}</span>
+          </td>
+          <td>{{ item.patient.age }} · {{ item.patient.gender }}</td>
+          <td>{{ item.reports|length }}</td>
+          <td>
+            {% if item.latest_severity is not none %}
+            <span class="sev sev-{{ item.latest_severity }}">{{ item.latest_severity_label }}</span>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td><span class="status status-{{ item.latest_status }}">{{ item.latest_status }}</span></td>
+          <td><strong>{{ item.summary }}</strong></td>
+          <td class="muted">{{ item.reports[0].date if item.reports else '—' }}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <a class="btn btn-sm" href="{{ url_for('patient_detail', patient_id=item.patient.patient_id) }}">Open</a>
+            {% if item.reports %}
+            <a class="btn btn-sm" href="{{ url_for('result', report_id=item.reports[0].report_id) }}">Latest</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p id="patientNoMatch" class="empty" style="display:none">No patients match.</p>
+</div>
+{% else %}
+<div class="card empty">
+  <h2>No patients yet</h2>
+  <p>Upload a retinal scan to create the first patient record.</p>
+  <a class="btn btn-primary" href="{{ url_for('index') }}">New Screening</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var s = document.getElementById('patientSearch');
+  var sev = document.getElementById('patientSevFilter');
+  var st = document.getElementById('patientStatusFilter');
+  var empty = document.getElementById('patientNoMatch');
+  if (!s || !sev || !st) return;
+  function apply() {
+    var q = s.value.toLowerCase().trim();
+    var sevVal = sev.value;
+    var stVal = st.value;
+    var n = 0;
+    document.querySelectorAll('#patientsTable tbody tr').forEach(function (tr) {
+      var ok = tr.dataset.name.includes(q)
+        && (!sevVal || tr.dataset.sev === sevVal)
+        && (!stVal || tr.dataset.status === stVal);
+      tr.style.display = ok ? '' : 'none';
+      if (ok) n++;
+    });
+    if (empty) empty.style.display = n ? 'none' : 'block';
+  }
+  s.addEventListener('input', apply);
+  sev.addEventListener('change', apply);
+  st.addEventListener('change', apply);
+})();
+</script>
+{% endblock %}

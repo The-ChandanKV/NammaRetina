@@ -88,7 +88,7 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
 
     def test_anonymous_routes_require_login(self):
-        for path in ["/scan", "/dashboard", "/reports", "/result/7", "/xai/7", "/download/7", "/files/uploads/scan.png"]:
+        for path in ["/scan", "/dashboard", "/patients", "/reports", "/result/7", "/xai/7", "/download/7", "/files/uploads/scan.png"]:
             self.assertEqual(self.client.get(path).status_code, 302)
 
     def test_csrf_rejects_missing_and_invalid_token(self):
@@ -319,6 +319,29 @@ class RegressionTests(unittest.TestCase):
         self.assertIn(b"Reports", response.data)
         self.assertIn(b"#7", response.data)
         self.assertIn(b"Test Patient", response.data)
+
+    def test_patients_list_includes_status_summary(self):
+        self.login()
+        directory = [{
+            "patient": self.patient,
+            "reports": [self.report],
+            "progression": [{"status": "Worsened"}],
+            "latest_status": "Worsened",
+            "latest_severity": 2,
+            "latest_severity_label": "Moderate",
+            "summary": "Moderate DR — worsening",
+        }]
+        self.patch(web, "_build_patient_directory", return_value=directory)
+        response = self.client.get("/patients")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Patients", response.data)
+        self.assertIn(b"Test Patient", response.data)
+        self.assertIn(b"Moderate DR \xe2\x80\x94 worsening", response.data)
+
+    def test_patient_status_summary_wording(self):
+        self.assertEqual(web._patient_status_summary(None, "No scans", 0), "Awaiting first scan")
+        self.assertEqual(web._patient_status_summary(2, "Worsened", 2), "Moderate DR — worsening")
+        self.assertEqual(web._patient_status_summary(0, "Stable", 3), "No DR — stable")
 
     def test_followup_form_contains_patient_id(self):
         self.login()

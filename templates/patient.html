@@ -1,31 +1,156 @@
 {% extends "base.html" %}
 {% block title %}{{ patient.name }}{% endblock %}
 {% block content %}
-<div class="page-head">
-  <div>
-    <p class="muted" style="margin:0"><a href="{{ url_for('dashboard') }}">Dashboard</a> / Patient #{{ patient.patient_id }}</p>
-    <h1>{{ patient.name }}</h1>
-    <p class="muted">{{ patient.age }} yrs · {{ patient.gender }} · {{ patient.diabetes_history }}</p>
+<p class="muted" style="margin:0 0 .75rem;font-size:.82rem">
+  <a href="{{ url_for('dashboard') }}">Dashboard</a> / Patient #{{ patient.patient_id }}
+</p>
+
+<div class="card patient-hero">
+  <div class="patient-hero-left">
+    <span class="patient-hero-avatar" aria-hidden="true">{{ patient.name[:2]|upper }}</span>
+    <div>
+      <h1>{{ patient.name }} <span class="muted" style="font-weight:600;font-size:.9rem">#{{ patient.patient_id }}</span></h1>
+      <p class="muted" style="margin:.2rem 0 0;font-size:.85rem">
+        {{ patient.age }} yrs · {{ patient.gender }}
+        {% if patient.diabetes_history and patient.diabetes_history != 'Not provided' %}
+        · {{ patient.diabetes_history }}
+        {% endif %}
+        · {{ reports|length }} recorded examination{% if reports|length != 1 %}s{% endif %}
+      </p>
+    </div>
   </div>
-  <a id="btn-add-scan" class="btn btn-primary" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ Add follow-up scan</a>
+  <div style="display:flex;gap:.55rem;flex-wrap:wrap">
+    <a id="btn-add-scan" class="btn" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ Follow-up scan</a>
+    {% if latest_report and latest_pdf_ready %}
+    <a id="btn-export-latest" class="btn btn-primary" href="{{ url_for('download_report', report_id=latest_report.report_id) }}">Export PDF Report</a>
+    {% elif latest_report %}
+    <a class="btn btn-primary" href="{{ url_for('result', report_id=latest_report.report_id) }}">Open latest report</a>
+    {% endif %}
+  </div>
 </div>
 
 <div class="grid grid-2">
-  <div class="card"><h3>Severity trend</h3>
-    {% if graph_url %}<div class="img-frame" style="background:#fff"><img src="{{ graph_url }}" alt="Progression graph"></div>
-    {% else %}<p class="muted">Not enough data for a trend yet.</p>{% endif %}
+  <div class="card">
+    <h3>Retinal Screening History</h3>
+    {% if reports %}
+    <ul class="history-list">
+      {% for r in reports %}
+      <li>
+        <a class="history-item {% if latest_report and r.report_id == latest_report.report_id %}is-active{% endif %}"
+           href="{{ url_for('result', report_id=r.report_id) }}">
+          <span class="history-date">{{ r.date }}</span>
+          <span class="history-sev">
+            {% if r.confidence and r.confidence > 0 %}
+            <span class="sev-dot sev-dot-{{ r.severity }}" aria-hidden="true"></span>
+            {{ dr_classes.get(r.severity, 'Unknown') }}
+            {% else %}
+            <span class="muted">Analysis unavailable</span>
+            {% endif %}
+          </span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No examinations recorded yet.</p>
+    {% endif %}
   </div>
-  <div class="card"><h3>Progression timeline</h3>
-    {% if progression %}<ul class="timeline">
-      {% for p in progression|reverse %}
-      <li><strong>{{ p.date }}</strong> — <span class="status status-{{ p.status }}">{{ p.status }}</span><br>
-        <span class="muted">{% if p.previous_severity is not none %}{{ dr_classes.get(p.previous_severity) }} → {% endif %}{{ dr_classes.get(p.current_severity) }}</span></li>
-      {% endfor %}</ul>
-    {% else %}<p class="muted">No progression records.</p>{% endif %}
+
+  <div class="card">
+    <h3>Severity Progression</h3>
+    {% if chart_marks %}
+    <svg class="progress-chart" viewBox="0 0 {{ chart_width }} {{ chart_height }}" role="img"
+         aria-label="Recorded severity over {{ chart_marks|length }} examination{% if chart_marks|length != 1 %}s{% endif %}">
+      <defs>
+        <linearGradient id="nr-prog-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#009F91" stop-opacity="0.22"/>
+          <stop offset="100%" stop-color="#009F91" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      {% for gy in [0,1,2,3,4] %}
+      {% set y = chart_pad_t + chart_plot_h - (gy / 4) * chart_plot_h %}
+      <line x1="{{ chart_pad_l }}" x2="{{ chart_width - chart_pad_r }}" y1="{{ y }}" y2="{{ y }}"
+            stroke="#DCE5EC" stroke-width="1" stroke-dasharray="3 4"/>
+      {% endfor %}
+      {% if chart_area_path %}<path d="{{ chart_area_path }}" fill="url(#nr-prog-fill)"/>{% endif %}
+      <polyline points="{{ chart_polyline }}" fill="none" stroke="#009F91" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      {% for m in chart_marks %}
+        <circle cx="{{ m.x }}" cy="{{ m.y }}" r="5" fill="var(--sev-{{ m.severity }})" stroke="#fff" stroke-width="2"/>
+        <text x="{{ m.x }}" y="{{ chart_height - 8 }}" text-anchor="middle" font-size="9" fill="#64748B">{{ m.label }}</text>
+      {% endfor %}
+    </svg>
+    <p class="note">Markers show recorded severity at each examination. The line connects visits for readability and does not imply continuous clinical change or future risk.</p>
+    {% elif graph_url %}
+    <div class="img-frame" style="background:#fff"><img src="{{ graph_url }}" alt="Progression graph"></div>
+    {% else %}
+    <p class="muted">Not enough data for a trend yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Explainability Heatmap</h3>
+    {% if latest_heatmap_url or latest_image_url %}
+    <div class="heatmap-preview">
+      {% if latest_heatmap_url %}
+      <img src="{{ latest_heatmap_url }}" alt="Grad-CAM heatmap for latest examination">
+      {% elif latest_image_url %}
+      <img src="{{ latest_image_url }}" alt="Latest retinal examination">
+      {% endif %}
+      <div>
+        <p style="margin:0;font-size:.86rem;color:var(--muted);line-height:1.55">
+          Visual explanation highlighting regions that influenced the AI-generated assessment for the
+          {% if latest_report %}selected examination ({{ latest_report.date }}){% else %}latest examination{% endif %}.
+        </p>
+        <p class="note">Highlighted areas indicate model attention and do not independently confirm retinal lesions.</p>
+        {% if latest_report %}
+        <a class="btn btn-sm" style="margin-top:.6rem" href="{{ url_for('result', report_id=latest_report.report_id) }}">Open full Grad-CAM view</a>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <p class="muted">No explainability imagery available yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Structured Report</h3>
+    {% if latest_report %}
+    <ul class="report-bullets">
+      <li>Screening result:
+        {% if latest_report.confidence and latest_report.confidence > 0 %}
+          {{ dr_classes.get(latest_report.severity, 'Unknown') }}
+          ({{ '%.1f'|format(latest_report.confidence * 100) }}% confidence)
+        {% else %}
+          Analysis unavailable
+        {% endif %}
+      </li>
+      <li>Examination date: {{ latest_report.date }}</li>
+      <li>Explainability images: {% if latest_heatmap_url %}available{% else %}not available{% endif %}</li>
+      <li>Progression context:
+        {% if progression %}
+          {{ progression[-1].status if progression[-1].status else 'Recorded' }}
+        {% else %}
+          No progression history
+        {% endif %}
+      </li>
+      {% if latest_report.recommendation %}
+      <li>{{ latest_report.recommendation }}</li>
+      {% endif %}
+    </ul>
+    <div style="margin-top:1rem;display:flex;gap:.5rem;flex-wrap:wrap">
+      <a class="btn btn-sm" href="{{ url_for('result', report_id=latest_report.report_id) }}">View report</a>
+      {% if latest_pdf_ready %}
+      <a class="btn btn-sm btn-primary" href="{{ url_for('download_report', report_id=latest_report.report_id) }}">Download PDF</a>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="muted">No structured report available yet.</p>
+    {% endif %}
   </div>
 </div>
 
-<div class="card"><h3>Scan history</h3>
+<div class="card">
+  <h3>Scan history detail</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>Report</th><th>Date</th><th>Scan</th><th>Grad-CAM</th><th>Severity</th><th>Confidence</th><th>Recommendation</th><th></th></tr></thead>
     <tbody>
@@ -36,7 +161,7 @@
       <td><a href="{{ url_for('result', report_id=r.report_id) }}"><img class="thumb" src="{{ r.heatmap_path|file_url }}" alt="Heatmap"></a></td>
       <td><span class="sev sev-{{ r.severity }}">{{ dr_classes.get(r.severity, 'Unknown') if r.confidence and r.confidence > 0 else 'Analysis unavailable' }}</span></td>
       <td>{% if r.confidence and r.confidence > 0 %}{{ '%.1f'|format(r.confidence * 100) }}%{% else %}<span class="muted">N/A</span>{% endif %}</td>
-      <td style="max-width:300px">{{ r.recommendation }}</td>
+      <td style="max-width:280px">{{ r.recommendation }}</td>
       <td style="text-align:right;white-space:nowrap">
         <a class="btn btn-sm" href="{{ url_for('result', report_id=r.report_id) }}">View</a>
         <a class="btn btn-sm" href="{{ url_for('download_report', report_id=r.report_id) }}">PDF</a></td>

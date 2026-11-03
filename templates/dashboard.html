@@ -2,20 +2,24 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Doctor <span class="gradient-text">Dashboard</span></h1>
-    <p class="muted">All patients, their latest severity and progression.</p></div>
-  <a id="btn-new-scan" href="{{ url_for('index') }}" class="btn btn-primary">+ New scan</a>
+  <div>
+    <p class="page-kicker">Overview</p>
+    <h1>Dashboard</h1>
+    <p class="page-sub">Welcome back, {{ session.username }}. Review patient records, recent screenings, and progression status.</p>
+  </div>
+  <a id="btn-new-scan" href="{{ url_for('index') }}" class="btn btn-primary">New Screening</a>
 </div>
 
-<div class="grid grid-4" style="margin-bottom:1.5rem">
-  <div class="card stat"><div class="num">{{ stats.patients }}</div><div class="lbl">Patients</div></div>
-  <div class="card stat"><div class="num">{{ stats.reports }}</div><div class="lbl">Total scans</div></div>
+<div class="grid grid-4" style="margin-bottom:1.25rem">
+  <div class="card stat"><div class="num">{{ stats.patients }}</div><div class="lbl">Total patients</div></div>
+  <div class="card stat"><div class="num">{{ stats.reports }}</div><div class="lbl">Total screenings</div></div>
   <div class="card stat"><div class="num" style="color:var(--sev-4)">{{ stats.high_risk }}</div><div class="lbl">Severe / proliferative</div></div>
-  <div class="card stat"><div class="num" style="color:var(--sev-2)">{{ stats.worsened }}</div><div class="lbl">Worsening</div></div>
+  <div class="card stat"><div class="num" style="color:var(--sev-2)">{{ stats.worsened }}</div><div class="lbl">Patients requiring review</div></div>
 </div>
 
 {% if patient_data %}
-<div class="card">
+<div class="card" id="patients">
+  <h3>Recent Patient Records</h3>
   <div class="toolbar">
     <input id="search" type="search" placeholder="Search patients by name or ID…">
     <select id="sevFilter" aria-label="Filter by severity">
@@ -36,7 +40,7 @@
       <td>{% if item.latest_severity is not none %}<span class="sev sev-{{ item.latest_severity }}">{{ item.latest_severity_label }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td><span class="status status-{{ item.latest_status }}">{{ item.latest_status }}</span></td>
       <td class="muted">{{ item.reports[0].date if item.reports else '—' }}</td>
-      <td style="text-align:right">
+      <td style="text-align:right;white-space:nowrap">
         <a class="btn btn-sm" href="{{ url_for('patient_detail', patient_id=item.patient.patient_id) }}">Open</a>
         {% if item.reports %}<a class="btn btn-sm" href="{{ url_for('result', report_id=item.reports[0].report_id) }}">Latest</a>{% endif %}
       </td>
@@ -47,8 +51,11 @@
   <p id="noMatch" class="empty" style="display:none">No patients match.</p>
 </div>
 {% else %}
-<div class="card empty"><h2>No patients yet</h2><p>Upload a retinal scan to create the first patient record.</p>
-  <a class="btn btn-primary" href="{{ url_for('index') }}">Upload scan</a></div>
+<div class="card empty" id="patients">
+  <h2>No patients yet</h2>
+  <p>Upload a retinal scan to create the first patient record.</p>
+  <a class="btn btn-primary" href="{{ url_for('index') }}">New Screening</a>
+</div>
 {% endif %}
 {% endblock %}
 

@@ -5,26 +5,28 @@
 <style>
 /* ─── XAI Page Styles ───────────────────────────────────────────── */
 .xai-hero {
-  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
-  border-radius: 1rem;
-  padding: 2rem 2.4rem;
-  margin-bottom: 1.6rem;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 1.25rem;
+  padding: 1.6rem 1.8rem;
+  margin-bottom: 1.25rem;
   position: relative;
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 .xai-hero::before {
   content: "";
   position: absolute; inset: 0;
-  background: radial-gradient(circle at 70% 50%, rgba(124,58,237,.25) 0%, transparent 70%);
+  background: radial-gradient(circle at 85% 20%, rgba(0,159,145,.12) 0%, transparent 55%);
   pointer-events: none;
 }
-.xai-hero h1 { margin: 0 0 .4rem; font-size: 1.7rem; }
-.xai-hero p { margin: 0; opacity: .75; font-size: .93rem; }
+.xai-hero h1 { margin: 0 0 .4rem; font-size: 1.55rem; color: var(--text); }
+.xai-hero p { margin: 0; color: var(--muted); font-size: .93rem; }
 .xai-badge {
   display: inline-flex; align-items: center; gap: .4rem;
-  background: rgba(124,58,237,.25); border: 1px solid rgba(124,58,237,.5);
-  border-radius: 2rem; padding: .3rem .9rem; font-size: .82rem;
-  color: #c4b5fd; margin-bottom: .8rem;
+  background: var(--accent-soft); border: 1px solid rgba(0,159,145,.25);
+  border-radius: 2rem; padding: .3rem .9rem; font-size: .78rem; font-weight: 700;
+  color: var(--accent); margin-bottom: .8rem;
 }
 
 .xai-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
@@ -40,21 +42,21 @@
   margin: 0 0 1rem;
   font-size: 1rem;
   display: flex; align-items: center; gap: .5rem;
-  color: var(--fg);
+  color: var(--text);
 }
 .xai-card h3 .icon { font-size: 1.1rem; }
 
 /* Probability bars */
 .prob-row { margin-bottom: .55rem; }
 .prob-label { font-size: .82rem; display: flex; justify-content: space-between; margin-bottom: .2rem; color: var(--muted); }
-.prob-label span:first-child { color: var(--fg); font-weight: 500; }
-.prob-bar { height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
+.prob-label span:first-child { color: var(--text); font-weight: 500; }
+.prob-bar { height: 10px; border-radius: 5px; background: #E8EEF4; overflow: hidden; }
 .prob-fill {
   height: 100%; border-radius: 5px;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  background: linear-gradient(90deg, #009F91, #06B6D4);
   transition: width .6s ease;
 }
-.prob-fill.predicted { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+.prob-fill.predicted { background: linear-gradient(90deg, #F59E0B, #EF4444); }
 
 /* Feature importance bars */
 .fi-row { margin-bottom: .65rem; }
@@ -62,20 +64,20 @@
 .fi-bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .fi-fill {
   height: 100%; border-radius: 4px;
-  background: linear-gradient(90deg, #0ea5e9, #6366f1);
+  background: linear-gradient(90deg, #009F91, #06B6D4);
   transition: width .7s ease;
 }
 
 /* Decomposition bars */
 .dec-row { margin-bottom: .8rem; }
 .dec-header { display: flex; justify-content: space-between; font-size: .84rem; margin-bottom: .18rem; }
-.dec-factor { font-weight: 600; color: var(--fg); }
-.dec-pct { color: #a78bfa; font-weight: 700; }
+.dec-factor { font-weight: 600; color: var(--text); }
+.dec-pct { color: #009F91; font-weight: 700; }
 .dec-desc { font-size: .77rem; color: var(--muted); margin-bottom: .28rem; }
 .dec-bar { height: 7px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .dec-fill {
   height: 100%; border-radius: 4px;
-  background: linear-gradient(90deg, #7c3aed, #db2777);
+  background: linear-gradient(90deg, #009F91, #0D9488);
 }
 
 /* Lesion cards */
@@ -99,7 +101,7 @@
 .cf-list { list-style: none; padding: 0; margin: 0; }
 .cf-list li {
   padding: .65rem .9rem;
-  border-left: 3px solid #7c3aed;
+  border-left: 3px solid #009F91;
   background: rgba(124,58,237,.08);
   border-radius: 0 .5rem .5rem 0;
   font-size: .87rem;
@@ -128,7 +130,7 @@
 /* Narrative */
 .xai-narrative { line-height: 1.75; font-size: .9rem; }
 .xai-narrative p { margin: 0 0 .9rem; }
-.xai-narrative em { color: #a78bfa; font-style: normal; font-weight: 600; }
+.xai-narrative em { color: #009F91; font-style: normal; font-weight: 600; }
 
 /* Breadcrumb */
 .xai-breadcrumb { font-size: .84rem; color: var(--muted); margin-bottom: 1.2rem; }
@@ -146,7 +148,7 @@
 .conf-gauge-wrap { display: flex; align-items: center; gap: 1rem; }
 .conf-gauge-arc { position: relative; width: 80px; height: 44px; overflow: hidden; flex-shrink: 0; }
 .conf-gauge-arc svg { position: absolute; top: 0; left: 0; }
-.conf-val { font-size: 1.4rem; font-weight: 800; color: #a78bfa; }
+.conf-val { font-size: 1.4rem; font-weight: 800; color: #009F91; }
 .conf-label-sm { font-size: .75rem; color: var(--muted); }
 </style>
 
@@ -154,7 +156,7 @@
   <a href="{{ url_for('dashboard') }}">Dashboard</a> /
   <a href="{{ url_for('patient_detail', patient_id=patient.patient_id) }}">{{ patient.name }}</a> /
   <a href="{{ url_for('result', report_id=report.report_id) }}">Report #{{ report.report_id }}</a> /
-  <strong style="color:var(--fg)">XAI Explanation</strong>
+  <strong style="color:var(--text)">XAI Explanation</strong>
 </div>
 
 <!-- Hero -->
@@ -374,7 +376,7 @@
 
 <!-- Back links -->
 <div style="margin-top:1.6rem;display:flex;gap:.8rem;flex-wrap:wrap">
-  <a class="btn btn-primary" href="{{ url_for('result', report_id=report.report_id) }}" style="background:linear-gradient(135deg,#7c3aed,#4f46e5)">← Back to Report</a>
+  <a class="btn btn-primary" href="{{ url_for('result', report_id=report.report_id) }}" >← Back to Report</a>
   <a class="btn" href="{{ url_for('dashboard') }}">Dashboard</a>
   {% if pdf_exists is defined and pdf_exists %}
   <a class="btn" href="{{ url_for('download_report', report_id=report.report_id) }}">⬇ Download PDF</a>

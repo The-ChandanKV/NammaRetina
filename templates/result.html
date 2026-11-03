@@ -1,19 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Report #{{ report.report_id }}{% endblock %}
 {% block content %}
+<p class="muted" style="margin:0 0 .75rem;font-size:.82rem">
+  <a href="{{ url_for('dashboard') }}">Dashboard</a> /
+  <a href="{{ url_for('patient_detail', patient_id=patient.patient_id) }}">{{ patient.name }}</a>
+</p>
 <div class="page-head">
   <div>
-    <p class="muted" style="margin:0"><a href="{{ url_for('dashboard') }}">Dashboard</a> /
-      <a href="{{ url_for('patient_detail', patient_id=patient.patient_id) }}">{{ patient.name }}</a></p>
-    <h1>Diagnostic report <span class="gradient-text">#{{ report.report_id }}</span></h1>
+    <p class="page-kicker">Diagnostic report</p>
+    <h1>Report #{{ report.report_id }}</h1>
+    <p class="page-sub">{{ patient.name }} · {{ report.date }}</p>
   </div>
-  <div style="display:flex;gap:.6rem;flex-wrap:wrap">
-    <a id="btn-rescan" class="btn" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ New scan for patient</a>
-    <a id="btn-xai" class="btn btn-primary" href="{{ url_for('xai_explain', report_id=report.report_id) }}" style="background:linear-gradient(135deg,#7c3aed,#4f46e5)">🔍 Explain AI Decision</a>
+  <div style="display:flex;gap:.55rem;flex-wrap:wrap">
+    <a id="btn-rescan" class="btn" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ Follow-up scan</a>
+    <a id="btn-xai" class="btn" href="{{ url_for('xai_explain', report_id=report.report_id) }}">Explain AI decision</a>
     <form method="POST" action="{{ url_for('regenerate_report', report_id=report.report_id) }}" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button id="btn-regen" class="btn" type="submit">↻ Regenerate PDF</button></form>
-    {% if pdf_exists and model_used %}<a id="btn-pdf" class="btn" href="{{ url_for('download_report', report_id=report.report_id) }}">⬇ Download PDF</a>{% endif %}
+      <button id="btn-regen" class="btn" type="submit">Regenerate PDF</button></form>
+    {% if pdf_exists and model_used %}<a id="btn-pdf" class="btn btn-primary" href="{{ url_for('download_report', report_id=report.report_id) }}">Export PDF Report</a>{% endif %}
   </div>
 </div>
 
@@ -114,9 +118,9 @@
         </div>
       {% endif %}
 
-      <div style="margin-top:.9rem;padding:.6rem .85rem;background:rgba(99,102,241,.08);border-left:3px solid #6366f1;border-radius:0 .4rem .4rem 0;font-size:.78rem;color:var(--muted)">
-        🔍 For a full breakdown of <em>why</em> the model made this prediction — including saliency maps, lesion detection, and counterfactual reasoning —
-        <a href="{{ url_for('xai_explain', report_id=report.report_id) }}" style="color:#a78bfa;font-weight:600">open the XAI dashboard →</a>
+      <div style="margin-top:.9rem;padding:.7rem .9rem;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 .5rem .5rem 0;font-size:.78rem;color:var(--muted)">
+        For a full breakdown of <em>why</em> the model made this prediction — including saliency maps, lesion detection, and counterfactual reasoning —
+        <a href="{{ url_for('xai_explain', report_id=report.report_id) }}" style="color:var(--accent);font-weight:700">open the XAI dashboard →</a>
       </div>
     </div>
 

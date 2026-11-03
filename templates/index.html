@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New Scan{% endblock %}
+{% block title %}New Screening{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
-    <h1>Retinal <span class="gradient-text">Screening</span></h1>
-    <p class="muted">Upload a fundus photograph for severity grading, Grad-CAM, progression tracking, simulation and a PDF report.</p>
+    <p class="page-kicker">Screening</p>
+    <h1>New Retinal Screening</h1>
+    <p class="page-sub">Upload a retinal fundus image and record patient details for AI-assisted analysis.</p>
   </div>
 </div>
 
@@ -13,21 +14,7 @@
 {% if prefill %}<input type="hidden" name="patient_id" value="{{ prefill.patient_id }}">{% endif %}
 <div class="grid grid-2">
   <div class="card">
-    <h3>1 · Retinal image</h3>
-    <div class="dropzone" id="uploadArea" tabindex="0">
-      <div id="uploadPlaceholder">
-        <div class="icon">👁️</div>
-        <p style="margin:.5rem 0 0">Click or drag a fundus image here</p>
-        <small class="muted">PNG, JPG, BMP, TIFF — max 16 MB</small>
-      </div>
-      <img id="imagePreview" style="display:none" alt="Selected retinal image preview">
-    </div>
-    <input type="file" id="retinalImage" name="retinal_image" accept=".png,.jpg,.jpeg,.bmp,.tiff,.tif" hidden required>
-    <p class="note" id="fileName"></p>
-  </div>
-
-  <div class="card">
-    <h3>2 · Patient details</h3>
+    <h3>Patient Information</h3>
     <div class="form-row">
       <div><label for="patientName">Full name *</label>
         <input id="patientName" name="patient_name" list="knownPatients" value="{{ prefill.name if prefill }}" placeholder="e.g. Anita Rao" required></div>
@@ -42,13 +29,34 @@
     </div>
     <div class="field"><label for="diabetesHistory">Diabetes history</label>
       <textarea id="diabetesHistory" name="diabetes_history" rows="3" placeholder="e.g. Type 2 diabetes for 10 years">{{ prefill.diabetes_history if prefill and prefill.diabetes_history != 'Not provided' }}</textarea></div>
+    {% if prefill %}
+    <p class="note">Follow-up visit for existing patient #{{ prefill.patient_id }}.</p>
+    {% else %}
     <p class="note">To add a visit to an existing patient, open their record and select Add follow-up scan.</p>
-    <button type="submit" id="submitBtn" class="btn btn-primary btn-lg">Analyse retinal scan</button>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Retinal Image</h3>
+    <div class="dropzone" id="uploadArea" tabindex="0" role="button" aria-controls="retinalImage">
+      <div id="uploadPlaceholder">
+        <div class="icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/></svg>
+        </div>
+        <p style="margin:.35rem 0 0;font-weight:700">Drag and drop a retinal fundus image</p>
+        <p class="muted" style="margin:.25rem 0 0;font-size:.85rem">or browse files</p>
+        <small class="muted">PNG, JPG, BMP, TIFF — max 16 MB</small>
+      </div>
+      <img id="imagePreview" style="display:none" alt="Selected retinal image preview">
+    </div>
+    <input type="file" id="retinalImage" name="retinal_image" accept=".png,.jpg,.jpeg,.bmp,.tiff,.tif" hidden required>
+    <p class="note" id="fileName"></p>
+    <button type="submit" id="submitBtn" class="btn btn-primary btn-lg" style="margin-top:1rem">Analyze Retinal Scan</button>
   </div>
 </div>
 </form>
 
-<div id="overlay"><div class="eye"></div><h2>Analysing scan…</h2><div id="stepText"></div></div>
+<div id="overlay"><div class="eye"></div><h2>Analyzing scan…</h2><div id="stepText"></div></div>
 {% endblock %}
 
 {% block scripts %}
@@ -56,9 +64,15 @@
 const input = document.getElementById('retinalImage'), area = document.getElementById('uploadArea');
 const prev = document.getElementById('imagePreview'), ph = document.getElementById('uploadPlaceholder');
 area.addEventListener('click', () => input.click());
-area.addEventListener('keydown', e => { if (e.key === 'Enter') input.click(); });
+area.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
 input.addEventListener('change', () => {
   const f = input.files[0]; if (!f) return;
+  const max = 16 * 1048576;
+  if (f.size > max) {
+    document.getElementById('fileName').textContent = 'File exceeds 16 MB — please choose a smaller image.';
+    input.value = '';
+    return;
+  }
   document.getElementById('fileName').textContent = f.name + ' · ' + (f.size / 1048576).toFixed(2) + ' MB';
   const r = new FileReader();
   r.onload = e => { prev.src = e.target.result; prev.style.display = 'block'; ph.style.display = 'none'; };

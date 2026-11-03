@@ -900,6 +900,52 @@ def patient_detail(patient_id: int):
             logger.warning("Could not plot progression: %s", exc)
         if (Path(config.BASE_DIR) / "reports" / f"progression_{patient_id}.png").exists():
             graph_url = url_for("serve_file", subdir="reports", filename=f"progression_{patient_id}.png")
+
+    latest_report = reports[0] if reports else None
+    latest_image_url = ""
+    latest_heatmap_url = ""
+    latest_pdf_ready = False
+    if latest_report:
+        latest_image_url = db_path_to_url(latest_report.get("image_path"))
+        if latest_report.get("heatmap_path"):
+            latest_heatmap_url = db_path_to_url(latest_report.get("heatmap_path"))
+        latest_pdf_ready = float(latest_report.get("confidence") or 0) > 0
+
+    # Chart geometry from real progression rows (oldest → newest).
+    chart_points = []
+    for row in progression or []:
+        try:
+            chart_points.append(
+                {
+                    "date": str(row.get("date") or ""),
+                    "severity": int(row.get("current_severity") if row.get("current_severity") is not None else 0),
+                    "status": row.get("status") or "",
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+
+    chart_width, chart_height = 320, 160
+    pad_l, pad_r, pad_t, pad_b = 28, 16, 18, 28
+    plot_w = chart_width - pad_l - pad_r
+    plot_h = chart_height - pad_t - pad_b
+    n = len(chart_points)
+    chart_marks = []
+    for idx, point in enumerate(chart_points):
+        x = pad_l if n == 1 else pad_l + (idx / (n - 1)) * plot_w
+        y = pad_t + plot_h - (point["severity"] / 4.0) * plot_h
+        label = point["date"][5:] if len(point["date"]) >= 10 else point["date"]
+        chart_marks.append({**point, "x": round(x, 2), "y": round(y, 2), "label": label})
+    polyline = " ".join(f"{m['x']},{m['y']}" for m in chart_marks)
+    area_path = ""
+    if chart_marks:
+        first, last = chart_marks[0], chart_marks[-1]
+        area_path = (
+            f"M{first['x']} {pad_t + plot_h} "
+            + " ".join(f"L{m['x']} {m['y']}" for m in chart_marks)
+            + f" L{last['x']} {pad_t + plot_h} Z"
+        )
+
     return render_template(
         "patient.html",
         patient=patient,
@@ -907,6 +953,20 @@ def patient_detail(patient_id: int):
         progression=progression,
         graph_url=graph_url,
         dr_classes=config.DR_CLASSES,
+        latest_report=latest_report,
+        latest_image_url=latest_image_url,
+        latest_heatmap_url=latest_heatmap_url,
+        latest_pdf_ready=latest_pdf_ready,
+        chart_marks=chart_marks,
+        chart_polyline=polyline,
+        chart_area_path=area_path,
+        chart_width=chart_width,
+        chart_height=chart_height,
+        chart_pad_l=pad_l,
+        chart_pad_r=pad_r,
+        chart_pad_t=pad_t,
+        chart_pad_b=pad_b,
+        chart_plot_h=plot_h,
     )
 
 

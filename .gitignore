@@ -55,3 +55,7 @@ processed.zip
 training/data/
 training/outputs/
 training/runs/
+
+# Generated evaluation artifacts (keep .gitkeep)
+evaluation_runs/*/
+!evaluation_runs/.gitkeep

@@ -61,11 +61,15 @@ from database import (
     DatabaseUnavailable,
     storage_object_exists,
 )
+from evaluation_reports import ensure_seed_evaluation, latest_evaluation, list_evaluation_runs, load_run
 from gradcam import generate_gradcam
+from lime_explainer import explain_with_loaded_model, load_lime_artifact, save_lime_artifact
 from llm_agent import explain_report
 from model_loader import load_model, predict_severity
 from progression import plot_progression, track_progression
+from progression_analysis import analyse_longitudinal_progression
 from report_generator import generate_pdf
+from simulation import METHOD_DESCRIPTION as SIMULATION_METHOD_DESCRIPTION
 from simulation import simulate_progression
 from treatment import get_treatment_recommendation
 from xai_engine import explain_prediction
@@ -298,6 +302,19 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
             return redirect(url_for("signin", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+def admin_required(view):
+    """Restrict research/evaluation pages to administrator accounts."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("signin", next=request.path))
+        if session.get("role") != "admin":
+            flash("Research evaluation is restricted to administrator accounts.", "warning")
+            return redirect(url_for("dashboard"))
         return view(*args, **kwargs)
     return wrapped
 
@@ -842,6 +859,11 @@ def result(report_id: int):
     if model_used and image_available and heatmap_available:
         simulation_url = ensure_simulation_for_report(dict(report), list(progression or []))
 
+    longitudinal = analyse_longitudinal_progression(
+        list(get_reports_for_patient(report["patient_id"]) or []),
+        patient=dict(patient) if patient else None,
+    )
+
     return render_template(
         "result.html",
         report=report,
@@ -856,6 +878,8 @@ def result(report_id: int):
         ),
         progression_status=latest_status,
         progression=progression,
+        longitudinal=longitudinal,
+        simulation_method=SIMULATION_METHOD_DESCRIPTION,
         image_url=image_url,
         heatmap_url=heatmap_url,
         image_available=image_available,
@@ -912,6 +936,7 @@ def xai_explain(report_id: int):
         except (ValueError, OSError):
             logger.warning("Stored probability metadata is unavailable")
     # Run image analysis using only recorded model outputs.
+    # Genuine LIME is on-demand (expensive) and loaded from cache when present.
     xai = explain_prediction(
         image_path=abs_image,
         heatmap_path=abs_heatmap,
@@ -919,6 +944,10 @@ def xai_explain(report_id: int):
         confidence=confidence,
         probabilities=probabilities,
     )
+    lime_cached = load_lime_artifact(REPORT_DIR, report_id)
+    lime_url = None
+    if lime_cached and Path(lime_cached.get("overlay_path", "")).exists():
+        lime_url = url_for("serve_file", subdir="reports", filename=Path(lime_cached["overlay_path"]).name)
 
     image_url = db_path_to_url(report["image_path"])
     heatmap_url = db_path_to_url(report["heatmap_path"])
@@ -933,7 +962,58 @@ def xai_explain(report_id: int):
         image_url=image_url,
         heatmap_url=heatmap_url,
         xai=xai,
+        lime=lime_cached,
+        lime_url=lime_url,
         dr_classes=config.DR_CLASSES,
+    )
+
+
+@app.route("/xai/<int:report_id>/lime", methods=["POST"])
+@login_required
+def generate_lime(report_id: int):
+    """On-demand genuine LIME explanation for the predicted class."""
+    report = get_report(report_id)
+    if report is None:
+        abort(404)
+    if float(report.get("confidence") or 0) <= 0:
+        flash("No prediction is available to explain for this report.", "warning")
+        return redirect(url_for("result", report_id=report_id))
+    abs_image = resolve_artifact(report["image_path"], UPLOAD_DIR)
+    if not abs_image:
+        flash("Original image not found — LIME requires the source image.", "warning")
+        return redirect(url_for("xai_explain", report_id=report_id))
+    try:
+        n_samples = int(request.form.get("n_samples") or 160)
+        n_samples = max(40, min(n_samples, 400))
+        result = explain_with_loaded_model(
+            abs_image,
+            target_class=int(report["severity"]),
+            n_samples=n_samples,
+            n_segments=36,
+            batch_size=16,
+            seed=42,
+        )
+        save_lime_artifact(result, REPORT_DIR, report_id)
+        flash("LIME explanation generated for the predicted class.", "success")
+    except Exception as exc:
+        logger.exception("LIME generation failed for report %s", report_id)
+        flash(f"LIME explanation unavailable: {exc}", "warning")
+    return redirect(url_for("xai_explain", report_id=report_id))
+
+
+@app.route("/evaluation")
+@admin_required
+def evaluation_dashboard():
+    """Administrator-only research evaluation dashboard (no patient PHI)."""
+    evaluation = ensure_seed_evaluation()
+    runs = [
+        {"id": path.name, "metrics": load_run(path)}
+        for path in list_evaluation_runs()[:12]
+    ]
+    return render_template(
+        "evaluation.html",
+        evaluation=evaluation or latest_evaluation(),
+        runs=runs,
     )
 
 
@@ -1055,11 +1135,17 @@ def patient_detail(patient_id: int):
             + f" L{last['x']} {pad_t + plot_h} Z"
         )
 
+    longitudinal = analyse_longitudinal_progression(
+        list(get_reports_for_patient(patient_id) or []),
+        patient=dict(patient) if patient else None,
+    )
+
     return render_template(
         "patient.html",
         patient=patient,
         reports=reports,
         progression=progression,
+        longitudinal=longitudinal,
         graph_url=graph_url,
         dr_classes=config.DR_CLASSES,
         latest_report=latest_report,
@@ -1083,52 +1169,57 @@ def patient_detail(patient_id: int):
 @login_required
 def regenerate_report(report_id: int):
     """Rebuild the PDF for an existing report."""
-    conn = get_connection()
-    try:
-        report = conn.execute("SELECT * FROM Reports WHERE report_id = ?", (report_id,)).fetchone()
-        progression_rows = []
-        if report is not None:
-            progression_rows = conn.execute(
-                "SELECT * FROM Progression WHERE patient_id = ? ORDER BY date ASC",
-                (report["patient_id"],),
-            ).fetchall()
-    finally:
-        conn.close()
+    report = get_report(report_id)
     if report is None:
         flash("Report not found.", "danger")
         return redirect(url_for("dashboard"))
-    patient = get_patient(report["patient_id"])
-    severity = int(report["severity"])
     if float(report.get("confidence") or 0) <= 0:
         flash("This record has no model prediction. Please run a new analysis before generating a diagnostic PDF.", "warning")
         return redirect(url_for("result", report_id=report_id))
-    base = Path(config.BASE_DIR)
-    graph = base / "reports" / f"progression_{report['patient_id']}.png"
-    ensure_simulation_for_report(dict(report), list(progression_rows or []))
-    sim_name = simulation_filename_for_image(report.get("image_path"))
-    sim = Path(config.SIMULATION_DIR) / sim_name if sim_name else None
     try:
-        heatmap = resolve_artifact(report["heatmap_path"], HEATMAP_DIR)
-        pdf_path = generate_pdf(
-            report_id=report_id,
-            patient={k: patient[k] for k in ("name", "age", "gender", "diabetes_history")},
-            severity=severity,
-            severity_label=config.DR_CLASSES.get(severity, "Unknown"),
-            confidence=float(report["confidence"]),
-            recommendation=report["recommendation"],
-            llm_summary=report["llm_summary"],
-            heatmap_path=heatmap,
-            progression_graph_path=str(graph) if graph.exists() else None,
-            simulation_path=str(sim) if sim and sim.exists() else None,
-            report_date=str(report["date"]),
-            output_dir=str(REPORT_DIR),
-        )
-        upload_file(pdf_path, BUCKET_REPORTS, f"pdfs/report_{report_id}.pdf")
-        flash("PDF report regenerated.", "success")
+        pdf_path = _build_report_pdf(dict(report))
+        if not pdf_path:
+            flash("Could not regenerate PDF for this report.", "danger")
+        else:
+            flash("PDF report regenerated.", "success")
     except Exception as exc:
         logger.exception("PDF regeneration failed")
         flash(f"Could not regenerate PDF: {exc}", "danger")
     return redirect(url_for("result", report_id=report_id))
+
+
+def _build_report_pdf(report: dict) -> str | None:
+    """Create (or rebuild) the PDF for a report and persist it to Storage when possible."""
+    if float(report.get("confidence") or 0) <= 0:
+        return None
+    patient = get_patient(report["patient_id"])
+    if patient is None:
+        return None
+    severity = int(report["severity"])
+    ensure_simulation_for_report(dict(report), list(get_progression_history(report["patient_id"]) or []))
+    sim_name = simulation_filename_for_image(report.get("image_path"))
+    sim = Path(config.SIMULATION_DIR) / sim_name if sim_name else None
+    graph = Path(config.BASE_DIR) / "reports" / f"progression_{report['patient_id']}.png"
+    heatmap = resolve_artifact(report.get("heatmap_path"), HEATMAP_DIR)
+    pdf_path = generate_pdf(
+        report_id=int(report["report_id"]),
+        patient={k: patient[k] for k in ("name", "age", "gender", "diabetes_history")},
+        severity=severity,
+        severity_label=config.DR_CLASSES.get(severity, "Unknown"),
+        confidence=float(report["confidence"]),
+        recommendation=report.get("recommendation") or "",
+        llm_summary=report.get("llm_summary") or "",
+        heatmap_path=heatmap,
+        progression_graph_path=str(graph) if graph.exists() else None,
+        simulation_path=str(sim) if sim and sim.exists() else None,
+        report_date=str(report.get("date") or ""),
+        output_dir=str(REPORT_DIR),
+    )
+    try:
+        upload_file(pdf_path, BUCKET_REPORTS, f"pdfs/report_{report['report_id']}.pdf")
+    except Exception:
+        logger.warning("PDF generated but storage upload failed for report %s", report.get("report_id"), exc_info=True)
+    return pdf_path
 
 
 @app.route("/download/<int:report_id>")
@@ -1141,7 +1232,7 @@ def download_report(report_id: int):
     if float(report.get("confidence") or 0) <= 0:
         flash("This record has no valid model prediction. A diagnostic PDF is unavailable.", "warning")
         return redirect(url_for("result", report_id=report_id))
-    pdf_path = Path(config.REPORT_DIR) / f"report_{report_id}.pdf"
+    pdf_path = Path(REPORT_DIR) / f"report_{report_id}.pdf"
     if not pdf_path.exists():
         restored = resolve_artifact(f"{BUCKET_REPORTS}/pdfs/report_{report_id}.pdf", REPORT_DIR)
         if restored:
@@ -1150,6 +1241,14 @@ def download_report(report_id: int):
     if not pdf_path.exists():
         # Try the non-static reports dir as well
         pdf_path = Path(config.BASE_DIR) / "reports" / f"report_{report_id}.pdf"
+
+    if not pdf_path.exists():
+        try:
+            rebuilt = _build_report_pdf(dict(report))
+            if rebuilt:
+                pdf_path = Path(rebuilt)
+        except Exception:
+            logger.exception("Automatic PDF rebuild failed for report %s", report_id)
 
     if not pdf_path.exists():
         flash("PDF report not found. Please regenerate.", "danger")

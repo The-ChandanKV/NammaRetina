@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Model Evaluation · Research{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="page-kicker">Administrator research</p>
+    <h1>Clinical Model Evaluation</h1>
+    <p class="page-sub">Research metrics only — not regulatory approval or clinical effectiveness claims.</p>
+  </div>
+</div>
+
+{% if not evaluation %}
+<div class="card">
+  <h3>No validated evaluation results available for this dataset.</h3>
+  <p class="muted">Run <code>python model_evaluation.py --predictions path/to/preds.npz</code> or import legacy metrics with <code>--import-legacy</code>.</p>
+</div>
+{% else %}
+
+<div class="grid grid-2">
+  <div class="card">
+    <h3>1. Model Performance Overview</h3>
+    <dl class="kv">
+      <dt>Dataset</dt><dd>{{ evaluation.dataset.name }} / {{ evaluation.dataset.split }}</dd>
+      <dt>Samples</dt><dd>{{ evaluation.dataset.n }}</dd>
+      <dt>Run</dt><dd>{{ evaluation.run_id or 'latest' }}</dd>
+      <dt>Checkpoint</dt><dd>{{ evaluation.model.checkpoint or 'unspecified' }}</dd>
+      <dt>Accuracy</dt><dd>{% if evaluation.five_class.accuracy is not none %}{{ '%.3f'|format(evaluation.five_class.accuracy) }}{% else %}—{% endif %}</dd>
+      <dt>Balanced accuracy</dt><dd>{% if evaluation.five_class.balanced_accuracy is not none %}{{ '%.3f'|format(evaluation.five_class.balanced_accuracy) }}{% else %}—{% endif %}</dd>
+      <dt>Macro F1</dt><dd>{% if evaluation.five_class.macro_f1 is not none %}{{ '%.3f'|format(evaluation.five_class.macro_f1) }}{% else %}—{% endif %}</dd>
+      <dt>QWK</dt><dd>{% if evaluation.five_class.quadratic_weighted_kappa is not none %}{{ '%.3f'|format(evaluation.five_class.quadratic_weighted_kappa) }}{% else %}—{% endif %}</dd>
+    </dl>
+  </div>
+
+  <div class="card">
+    <h3>10. Evaluation Limitations</h3>
+    <ul style="margin:0;padding-left:1.1rem;line-height:1.6;font-size:.9rem">
+      {% for item in evaluation.limitations %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+    <p class="note" style="margin-top:1rem"><strong>Clinical Limitations and Research Status:</strong> technical implementation and internal evaluation do not establish clinical effectiveness or regulatory approval.</p>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.1rem">
+  <h3>2. Five-Class DR Classification</h3>
+  {% if evaluation.five_class.per_class %}
+  <div style="overflow-x:auto">
+    <table class="data-table" style="width:100%;border-collapse:collapse;font-size:.88rem">
+      <thead>
+        <tr>
+          <th align="left">Class</th><th>Precision</th><th>Recall</th><th>F1</th><th>Support</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name, row in evaluation.five_class.per_class.items() %}
+        <tr>
+          <td>{{ name }}</td>
+          <td>{% if row.precision is not none %}{{ '%.3f'|format(row.precision) }}{% else %}—{% endif %}</td>
+          <td>{% if row.recall is not none %}{{ '%.3f'|format(row.recall) }}{% else %}—{% endif %}</td>
+          <td>{% if row.f1 is not none %}{{ '%.3f'|format(row.f1) }}{% else %}—{% endif %}</td>
+          <td>{% if row.support is not none %}{{ row.support }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No validated evaluation results available for this dataset.</p>
+  {% endif %}
+</div>
+
+<div class="grid grid-2" style="margin-top:1.1rem">
+  <div class="card">
+    <h3>3. Referable DR Detection</h3>
+    <p class="note">{{ evaluation.referable_dr.definition }}</p>
+    <dl class="kv">
+      <dt>Sensitivity</dt><dd>{% if evaluation.referable_dr.sensitivity is not none %}{{ '%.3f'|format(evaluation.referable_dr.sensitivity) }}{% else %}—{% endif %}</dd>
+      <dt>Specificity</dt><dd>{% if evaluation.referable_dr.specificity is not none %}{{ '%.3f'|format(evaluation.referable_dr.specificity) }}{% else %}—{% endif %}</dd>
+      <dt>ROC-AUC</dt><dd>{% if evaluation.referable_dr.roc_auc is not none %}{{ '%.3f'|format(evaluation.referable_dr.roc_auc) }}{% else %}—{% endif %}</dd>
+      <dt>PR-AUC</dt><dd>{% if evaluation.referable_dr.pr_auc is not none %}{{ '%.3f'|format(evaluation.referable_dr.pr_auc) }}{% else %}—{% endif %}</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h3>4. Severe DR Detection</h3>
+    <p class="note">{{ evaluation.severe_dr.definition }}</p>
+    {% if evaluation.severe_dr.sensitivity is none and evaluation.severe_dr.specificity is none %}
+    <p class="muted">No validated evaluation results available for this dataset.</p>
+    {% if evaluation.severe_dr.note %}<p class="note">{{ evaluation.severe_dr.note }}</p>{% endif %}
+    {% else %}
+    <dl class="kv">
+      <dt>Sensitivity</dt><dd>{% if evaluation.severe_dr.sensitivity is not none %}{{ '%.3f'|format(evaluation.severe_dr.sensitivity) }}{% else %}—{% endif %}</dd>
+      <dt>Specificity</dt><dd>{% if evaluation.severe_dr.specificity is not none %}{{ '%.3f'|format(evaluation.severe_dr.specificity) }}{% else %}—{% endif %}</dd>
+    </dl>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:1.1rem">
+  <div class="card">
+    <h3>5. Confusion Matrix</h3>
+    {% if evaluation.five_class.confusion_matrix %}
+    <div style="overflow-x:auto">
+      <table class="data-table" style="width:100%;border-collapse:collapse;font-size:.82rem;text-align:center">
+        <thead>
+          <tr>
+            <th></th>
+            {% for name in evaluation.dataset.class_names %}<th>{{ loop.index0 }}</th>{% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in evaluation.five_class.confusion_matrix %}
+          <tr>
+            <th>{{ loop.index0 }}</th>
+            {% for cell in row %}<td>{{ cell }}</td>{% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted">No validated evaluation results available for this dataset.</p>
+    {% endif %}
+  </div>
+  <div class="card">
+    <h3>6. Sensitivity and Specificity</h3>
+    <p class="note">Referable DR (grade ≥ 2)</p>
+    <dl class="kv">
+      <dt>Sensitivity</dt><dd>{% if evaluation.referable_dr.sensitivity is not none %}{{ '%.3f'|format(evaluation.referable_dr.sensitivity) }}{% else %}—{% endif %}</dd>
+      <dt>Specificity</dt><dd>{% if evaluation.referable_dr.specificity is not none %}{{ '%.3f'|format(evaluation.referable_dr.specificity) }}{% else %}—{% endif %}</dd>
+      <dt>Sens. 95% CI</dt><dd>{{ evaluation.referable_dr.sensitivity_ci95 or '—' }}</dd>
+      <dt>Spec. 95% CI</dt><dd>{{ evaluation.referable_dr.specificity_ci95 or '—' }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:1.1rem">
+  <div class="card">
+    <h3>7. Calibration Analysis</h3>
+    {% if evaluation.calibration and evaluation.calibration.get('expected_calibration_error') is not none %}
+    <dl class="kv">
+      <dt>ECE</dt><dd>{{ '%.4f'|format(evaluation.calibration.expected_calibration_error) }}</dd>
+      <dt>Multiclass Brier</dt><dd>{{ '%.4f'|format(evaluation.calibration.brier_score_multiclass) }}</dd>
+    </dl>
+    <p class="note">{{ evaluation.calibration.note }}</p>
+    {% else %}
+    <p class="muted">No validated evaluation results available for this dataset.</p>
+    {% if evaluation.calibration and evaluation.calibration.message %}<p class="note">{{ evaluation.calibration.message }}</p>{% endif %}
+    {% endif %}
+  </div>
+  <div class="card">
+    <h3>8. External Dataset Validation</h3>
+    <p><strong>{{ evaluation.external_validation.message }}</strong></p>
+    {% if evaluation.external_validation.note %}<p class="note">{{ evaluation.external_validation.note }}</p>{% endif %}
+  </div>
+</div>
+
+<div class="card" style="margin-top:1.1rem">
+  <h3>9. Explainability Diagnostics</h3>
+  <p class="muted">LIME surrogate fidelity, stability, and Grad-CAM reproducibility checks are available via <code>explainability_evaluation.py</code>. Visual agreement between Grad-CAM and LIME is not proof of clinical correctness.</p>
+</div>
+
+{% if runs %}
+<div class="card" style="margin-top:1.1rem">
+  <h3>Saved evaluation runs</h3>
+  <ul style="margin:0;padding-left:1.1rem;font-size:.9rem">
+    {% for run in runs %}
+    <li><code>{{ run.id }}</code>{% if run.metrics %} — n={{ run.metrics.dataset.n }}, acc={% if run.metrics.five_class.accuracy is not none %}{{ '%.3f'|format(run.metrics.five_class.accuracy) }}{% else %}—{% endif %}{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

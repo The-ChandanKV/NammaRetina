@@ -88,7 +88,7 @@ When you upload a retinal image through the web interface, the following pipelin
 3. **Model Prediction** — EfficientNetB0 classifies DR severity (0–4)
 4. **Grad-CAM Heatmap** — Highlights the retinal regions influencing the prediction
 5. **Progression Tracking** — Compares current severity against prior scans
-6. **Disease Spread Simulation** — Probabilistic visualisation of future retinal changes
+6. **Longitudinal Progression Analysis** — Descriptive severity timeline from recorded visits (not a clinical forecast); optional illustrative spatial attention overlay
 7. **Treatment Recommendation** — Rule-based clinical follow-up guidance
 8. **LLM Explanation** — Plain-language summary for doctors and patients
 9. **Database Record** — Full report saved to Supabase
@@ -110,6 +110,9 @@ When you upload a retinal image through the web interface, the following pipelin
 | `/result/<report_id>` | GET | Required | Displays the diagnostic result |
 | `/dashboard` | GET | Required | Doctor dashboard — all patients and reports |
 | `/download/<report_id>` | GET | Required | Downloads the PDF report |
+| `/xai/<report_id>` | GET | Required | Grad-CAM + on-demand LIME explainability |
+| `/xai/<report_id>/lime` | POST | Required | Generate genuine LIME for the predicted class |
+| `/evaluation` | GET | Admin | Research model-evaluation dashboard |
 | `/files/<subdir>/<filename>` | GET | Required | Serves uploaded images, heatmaps, and simulations |
 
 \*Public registration is locked after the first admin account exists.
@@ -134,7 +137,12 @@ NammaRetina/
 ├── gradcam.py                 # Grad-CAM heatmap generation (Phase 5)
 ├── preprocess_local.py        # Image preprocessing pipeline (Phase 2)
 ├── progression.py             # Progression tracking (Phase 6)
-├── simulation.py              # Disease spread simulation (Phase 7)
+├── progression_analysis.py    # Longitudinal severity analysis
+├── simulation.py              # Illustrative spatial attention overlay
+├── lime_explainer.py          # Genuine LIME (perturbation + Ridge surrogate)
+├── model_evaluation.py        # Clinical research evaluation metrics
+├── explainability_evaluation.py
+├── evaluation_reports.py      # Load evaluation runs for admin UI
 ├── treatment.py               # Treatment recommendations (Phase 8)
 ├── llm_agent.py               # LLM integration (Phase 9)
 ├── report_generator.py        # PDF report generation (Phase 12)
@@ -227,6 +235,48 @@ Render deploys the GitHub `main` branch. `/health` exposes the running Render co
 model is available; responses include `X-App-Revision`. The endpoint returns HTTP 503 when the database or model is unavailable, and HTTP 200 only when
 both are available. It does not validate model quality. Set `MODEL_URL` or provide model weights to enable analysis.
 
+
+## Progression analysis, LIME, and evaluation
+
+### Longitudinal analysis vs forecasting
+
+`progression_analysis.py` compares recorded ordinal DR grades (0–4) across dated examinations, including intervals and direction of change. Apparent improvement does **not** prove clinical recovery. No supervised progression-risk model is trained because the repository lacks patient-linked longitudinal outcomes with defined horizons.
+
+The spatial overlay in `simulation.py` is labeled **Illustrative Spatial Simulation — Not a Clinical Forecast**. It remaps Grad-CAM attention with FOV masking; it does not invent lesions or claim future spread.
+
+### Grad-CAM vs genuine LIME
+
+- **Grad-CAM** (`gradcam.py`): class-specific CNN activation maps.
+- **LIME** (`lime_explainer.py`): SLIC (or grid) superpixels → batched perturbations → Ridge surrogate on the black-box class score. Generated on demand via `/xai/<id>/lime` and cached under `static/reports/lime_<id>.*`.
+- The older heatmap-ranked region panel is **not** LIME.
+
+Highlighted regions are not confirmed pathological lesions. Agreement between Grad-CAM and LIME does not establish diagnostic correctness.
+
+### Running independent evaluation
+
+```bash
+# From saved predictions (y_true + probabilities):
+python model_evaluation.py --predictions path/to/preds.npz --dataset aptos --split test
+
+# Import a prior training/results metrics JSON (partial fields only):
+python model_evaluation.py --import-legacy training/results/cpu_metrics.json --dataset aptos_internal_validation
+```
+
+Runs are written to timestamped folders under `evaluation_runs/` (JSON, CSV, markdown). The admin page `/evaluation` displays completed runs only — never fabricated metrics. External validation remains pending until a non-overlapping scored dataset run is produced.
+
+Bootstrap 95% CIs are image-level by default, or patient-level when `patient_ids` are supplied.
+
+### Computational notes
+
+LIME uses batched inference (`n_samples` default 160 in the UI, configurable). Prefer on-demand generation on Render CPU instances. Classification and Grad-CAM continue if LIME fails.
+
+---
+
+## Clinical Limitations and Research Status
+
+Technical implementation, Grad-CAM/LIME visualizations, illustrative spatial overlays, and internal evaluation metrics do **not** establish clinical effectiveness, diagnostic reliability, or regulatory approval. NammaRetina is a screening-assistance research system; clinician review remains required. Do not treat highlighted regions as confirmed lesions or treat illustrative simulations as prognoses.
+
+---
 
 ## Latest training experiment
 

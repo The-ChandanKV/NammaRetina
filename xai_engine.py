@@ -49,7 +49,10 @@ def _load_bgr(image_path: str, size: int = 512) -> np.ndarray:
     return cv2.resize(img, (size, size))
 
 
-# ─── 1. Superpixel Saliency (LIME-style) ─────────────────────────────────────
+# ─── 1. Heatmap-ranked superpixels (NOT genuine LIME) ─────────────────────────
+# Genuine perturbation-based LIME lives in lime_explainer.py and is generated
+# on demand from the Flask /xai/<id>/lime route.
+
 
 def _simple_superpixels(gray: np.ndarray, n_segments: int = 60) -> np.ndarray:
     h, w = gray.shape
@@ -496,8 +499,12 @@ def explain_prediction(
     narrative = (
         f"<p>The recorded classifier output is <strong>{DR_CLASSES.get(severity, 'Unknown')}</strong> "
         f"with a score of {confidence * 100:.1f}%. This score is not a calibrated probability of disease.</p>"
-        "<p>The image measurements below use classical image processing. They do not establish "
-        "which lesions caused the classifier output or how the classifier would respond to an edited image.</p>"
+        "<p><strong>Grad-CAM</strong> highlights class-specific activation regions. "
+        "<strong>Genuine LIME</strong> (Panel 3) perturbs superpixels and fits a local surrogate — "
+        "generate it on demand. The heatmap-ranked region map below is <em>not</em> LIME.</p>"
+        "<p>Highlighted regions are not confirmed pathological lesions. Agreement between Grad-CAM "
+        "and LIME does not establish diagnostic correctness. Classical image measurements below "
+        "are separate heuristics and do not attribute model decisions.</p>"
     )
     if probabilities is None or len(probabilities) != 5:
         probabilities = []

@@ -53,6 +53,10 @@
 
   <div class="sidebar-footer">
     {% if session.role == 'admin' %}
+    <a class="sidebar-link {{ 'active' if ep == 'evaluation_dashboard' }}" href="{{ url_for('evaluation_dashboard') }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 3 5-6"/></svg>
+      Model evaluation
+    </a>
     <a class="sidebar-link" href="{{ url_for('register') }}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
       Add account

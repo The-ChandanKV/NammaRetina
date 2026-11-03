@@ -237,8 +237,11 @@ class RegressionTests(unittest.TestCase):
 
     def test_regenerated_pdf_is_uploaded(self):
         self.login()
-        self.patch(web, "get_connection", return_value=self.connection())
+        self.patch(web, "get_report", return_value=self.report)
         self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_progression_history", return_value=[])
+        self.patch(web, "ensure_simulation_for_report", return_value=None)
+        self.patch(web, "simulation_filename_for_image", return_value=None)
         self.patch(web, "resolve_artifact", return_value=None)
         pdf = str(web.REPORT_DIR / "report_7.pdf")
         self.patch(web, "generate_pdf", return_value=pdf)
@@ -246,6 +249,23 @@ class RegressionTests(unittest.TestCase):
         response = self.client.post("/report/7/regenerate", data={"csrf_token": "test-csrf"})
         self.assertEqual(response.location, "/result/7")
         upload.assert_called_once_with(pdf, "reports", "pdfs/report_7.pdf")
+
+    def test_missing_pdf_is_rebuilt_on_download(self):
+        self.login()
+        self.patch(web, "get_report", return_value=self.report)
+        self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_progression_history", return_value=[])
+        self.patch(web, "ensure_simulation_for_report", return_value=None)
+        self.patch(web, "simulation_filename_for_image", return_value=None)
+        self.patch(web, "resolve_artifact", return_value=None)
+        pdf = web.REPORT_DIR / "report_7.pdf"
+        self.patch(web, "generate_pdf", side_effect=lambda **kwargs: (pdf.write_bytes(b"%PDF-rebuilt"), str(pdf))[1])
+        upload = self.patch(web, "upload_file")
+        response = self.client.get("/download/7")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"%PDF-rebuilt")
+        upload.assert_called_once_with(str(pdf), "reports", "pdfs/report_7.pdf")
+        response.close()
 
     def test_legacy_placeholder_pdf_and_xai_are_blocked(self):
         self.login()

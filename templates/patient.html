@@ -57,7 +57,12 @@
   </div>
 
   <div class="card">
-    <h3>Severity Progression</h3>
+    <h3>Disease Progression (observed)</h3>
+    {% if longitudinal %}
+    <p class="note" style="margin-top:0">{{ longitudinal.summary }}</p>
+    <p class="note">Forecasting model: not available — {{ longitudinal.forecasting.reason }}</p>
+    {% endif %}
+    <h3 style="margin-top:1.25rem">Severity Progression</h3>
     {% if chart_marks %}
     <svg class="progress-chart" viewBox="0 0 {{ chart_width }} {{ chart_height }}" role="img"
          aria-label="Recorded severity over {{ chart_marks|length }} examination{% if chart_marks|length != 1 %}s{% endif %}">

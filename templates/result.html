@@ -132,6 +132,44 @@
       </div>
     </div>
 
+    <div class="card">
+      <h3>Disease Progression</h3>
+      <p class="note" style="margin-top:0">Observed historical analysis from recorded examinations — not a clinical forecast.</p>
+      {% if longitudinal %}
+      <dl class="kv">
+        <dt>Examinations analysed</dt><dd>{{ longitudinal.n_examinations }}</dd>
+        <dt>Overall trend</dt><dd>{{ longitudinal.overall_trend }}</dd>
+        {% if longitudinal.observation_span_days is not none %}
+        <dt>Observation span</dt><dd>{{ longitudinal.observation_span_days }} days</dd>
+        {% endif %}
+      </dl>
+      <p style="margin:.75rem 0 0;font-size:.9rem;line-height:1.55">{{ longitudinal.summary }}</p>
+      {% if longitudinal.previous_vs_current and longitudinal.previous_vs_current.previous %}
+      <div class="compare" style="margin-top:1rem">
+        <div>
+          <p class="note">Previous</p>
+          <p style="margin:0;font-weight:700">{{ longitudinal.previous_vs_current.previous.severity_label }}</p>
+          <p class="muted" style="margin:.2rem 0 0">{{ longitudinal.previous_vs_current.previous.date }}</p>
+        </div>
+        <div>
+          <p class="note">Current</p>
+          <p style="margin:0;font-weight:700">{{ longitudinal.previous_vs_current.current.severity_label }}</p>
+          <p class="muted" style="margin:.2rem 0 0">{{ longitudinal.previous_vs_current.current.date }}</p>
+        </div>
+      </div>
+      {% endif %}
+      {% if longitudinal.risk_context and longitudinal.risk_context.available_factors %}
+      <p class="note" style="margin-top:1rem">Documented context (descriptive only):</p>
+      <ul style="margin:.4rem 0 0;padding-left:1.1rem;font-size:.88rem">
+        {% for factor in longitudinal.risk_context.available_factors %}
+        <li><strong>{{ factor.factor }}:</strong> {{ factor.value }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <p class="note" style="margin-top:1rem">{{ longitudinal.forecasting.reason }}</p>
+      {% endif %}
+    </div>
+
     {% if progression %}
     <div class="card"><h3>Progression timeline</h3>
       <ul class="timeline">
@@ -259,11 +297,15 @@
       <div class="img-frame" style="background:#fff"><img src="{{ progression_graph_url }}" alt="Progression graph"></div></div>
     {% endif %}
     {% if simulation_url %}
-    <div class="card"><h3>Disease spread simulation</h3>
-      <div class="img-frame"><img src="{{ simulation_url }}" alt="Illustrative disease-spread simulation based on Grad-CAM attention"></div>
-      <p class="note">Probabilistic visualisation derived from this scan’s Grad-CAM attention and recorded progression trend — not a clinically validated forecast.</p></div>
+    <div class="card">
+      <h3>Illustrative Spatial Simulation</h3>
+      <p class="note" style="margin-top:0"><strong>Illustrative Spatial Simulation — Not a Clinical Forecast</strong></p>
+      <div class="img-frame"><img src="{{ simulation_url }}" alt="Illustrative spatial simulation based on Grad-CAM attention"></div>
+      <p class="note" style="margin-top:.75rem">{{ simulation_method }}</p>
+      <p class="note">Separate from the historical Disease Progression analysis above. Grad-CAM intensity does not predict where diabetic retinopathy will spread.</p>
+    </div>
     {% elif model_used and image_available and heatmap_available %}
-    <div class="card"><h3>Disease spread simulation</h3>
+    <div class="card"><h3>Illustrative Spatial Simulation</h3>
       <p class="muted" style="margin:0">Simulation could not be generated for this examination.</p></div>
     {% endif %}
   </div>

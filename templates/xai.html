@@ -161,11 +161,86 @@
 
 <!-- Hero -->
 <div class="xai-hero">
-  <div class="xai-badge">🔬 Explainable AI · Zero API Keys · Local Analysis</div>
+  <div class="xai-badge">Explainable AI · Grad-CAM + genuine LIME</div>
   <h1 class="gradient-text">Retinal Image Analysis</h1>
-  <p>Why did the model classify this retinal scan as <strong>{{ severity_label }}</strong>?
-     Recorded model scores and separate image-processing measurements are shown below.</p>
+  <p>Target class: <strong>{{ severity_label }}</strong> (stage {{ severity }}/4).
+     Grad-CAM and LIME explain the same predicted class. Highlighted regions are not confirmed lesions.</p>
 </div>
+
+<div class="xai-card" style="margin-bottom:1.2rem">
+  <h3>Understanding the AI Decision</h3>
+  <div class="xai-grid">
+    <div>
+      <p style="margin:0 0 .35rem;font-weight:700;color:var(--text)">Grad-CAM</p>
+      <p class="note" style="margin:0">Highlights spatial regions associated with the model's class-specific activations.</p>
+    </div>
+    <div>
+      <p style="margin:0 0 .35rem;font-weight:700;color:var(--text)">LIME</p>
+      <p class="note" style="margin:0">Estimates the local influence of image regions by perturbing superpixels and observing changes in model predictions.</p>
+    </div>
+  </div>
+  <p class="note" style="margin-top:.9rem">Agreement between the two methods does not establish diagnostic correctness.</p>
+</div>
+
+<div class="xai-card" style="margin-bottom:1.2rem">
+  <h3>Explanation panels · target class {{ severity_label }}</h3>
+  <div class="xai-img-row">
+    <div class="xai-img-wrap">
+      <img src="{{ image_url }}" alt="Original retinal scan" loading="lazy">
+      <div class="xai-img-caption">Panel 1 · Original Retinal Image</div>
+    </div>
+    <div class="xai-img-wrap">
+      {% if heatmap_url %}
+      <div style="position:relative">
+        <img src="{{ image_url }}" alt="" aria-hidden="true" style="width:100%;border-radius:.5rem;display:block">
+        <img id="xai-gradcam-heat" src="{{ heatmap_url }}" alt="Grad-CAM overlay" loading="lazy"
+             style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:.5rem;opacity:.62;mix-blend-mode:multiply">
+      </div>
+      {% else %}
+      <img src="{{ image_url }}" alt="Grad-CAM unavailable" loading="lazy">
+      {% endif %}
+      <div class="xai-img-caption">Panel 2 · Grad-CAM Explanation</div>
+      {% if heatmap_url %}
+      <label class="note" style="display:flex;align-items:center;gap:.5rem;margin-top:.45rem">
+        Heatmap opacity
+        <input id="xai-gradcam-opacity" type="range" min="0" max="100" value="62" style="flex:1">
+      </label>
+      {% endif %}
+    </div>
+    <div class="xai-img-wrap">
+      {% if lime_url %}
+      <img src="{{ lime_url }}" alt="LIME superpixel explanation" loading="lazy">
+      <div class="xai-img-caption">Panel 3 · LIME Explanation</div>
+      {% if lime %}
+      <p class="note" style="margin-top:.45rem">
+        Surrogate fidelity R²={{ lime.fidelity_r2 }} · {{ lime.n_samples }} perturbations ·
+        teal = positive contribution, red = negative. {{ lime.disclaimer }}
+      </p>
+      {% endif %}
+      {% else %}
+      <div style="border:1px dashed var(--border);border-radius:.5rem;padding:1.2rem;min-height:140px">
+        <p class="note" style="margin:0 0 .75rem">Genuine LIME is generated on demand (batched model inference). It is not run on every page load.</p>
+        <form method="POST" action="{{ url_for('generate_lime', report_id=report.report_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="n_samples" value="160">
+          <button class="btn btn-primary" type="submit">Generate LIME for {{ severity_label }}</button>
+        </form>
+      </div>
+      <div class="xai-img-caption">Panel 3 · LIME Explanation</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var heat = document.getElementById("xai-gradcam-heat");
+  var slider = document.getElementById("xai-gradcam-opacity");
+  if (!heat || !slider) return;
+  slider.addEventListener("input", function () {
+    heat.style.opacity = String((Number(slider.value) || 0) / 100);
+  });
+})();
+</script>
 
 <!-- ── Narrative (full width) ── -->
 <div class="xai-card" style="margin-bottom:1.2rem">
@@ -228,13 +303,12 @@
   <!-- RIGHT column -->
   <div style="display:flex;flex-direction:column;gap:1.2rem">
 
-    <!-- Saliency overlay -->
+    <!-- Heatmap-ranked regions (not LIME) -->
     <div class="xai-card">
-      <h3><span class="icon">🗺️</span> Superpixel Saliency Map</h3>
+      <h3><span class="icon">🗺️</span> Heatmap-ranked regions (not LIME)</h3>
       <p style="font-size:.8rem;color:var(--muted);margin:0 0 .9rem">
-        Image partitioned into <strong>{{ xai.saliency.n_segments }}</strong> regions.
-        Red/orange = most influential; blue = less influential.
-        Yellow contours mark the top-{{ xai.saliency.top_regions | length }} decision regions.
+        Legacy view: image partitioned into <strong>{{ xai.saliency.n_segments }}</strong> regions and ranked by Grad-CAM intensity.
+        This is <strong>not</strong> a perturbation-based LIME surrogate. Use Panel 3 above for genuine LIME.
       </p>
       <div class="xai-img-row">
         <div class="xai-img-wrap">

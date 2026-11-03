@@ -190,6 +190,76 @@ def resolve_artifact(storage_path, directory):
     return None
 
 
+def simulation_filename_for_image(image_path: str | None) -> str | None:
+    """Derive the on-disk / storage simulation filename from a report image path."""
+    if not image_path:
+        return None
+    sim_filename = f"{Path(str(image_path).split('/')[-1]).stem}_simulation.png"
+    # Older uploads used a second timestamp only in their remote object name.
+    if len(sim_filename) > 32 and sim_filename[:8].isdigit() and sim_filename[16:24].isdigit():
+        sim_filename = sim_filename[16:]
+    return sim_filename
+
+
+def ensure_simulation_for_report(report: dict, progression_rows: list | None) -> str | None:
+    """Return a /files/simulations/... URL only when a real simulation image exists.
+
+    Regenerates from the retinal scan + Grad-CAM when the artifact is missing,
+    then persists it to local disk and Supabase Storage when possible.
+    """
+    image_path = report.get("image_path")
+    heatmap_path = report.get("heatmap_path")
+    sim_filename = simulation_filename_for_image(image_path)
+    if not sim_filename or not heatmap_path:
+        return None
+
+    local_sim = Path(config.SIMULATION_DIR) / sim_filename
+    remote_key = f"simulations/{sim_filename}"
+
+    if local_sim.is_file() and local_sim.stat().st_size > 0:
+        return url_for("serve_file", subdir="simulations", filename=sim_filename)
+
+    # Prefer an already-uploaded simulation without regenerating.
+    if get_signed_url(BUCKET_REPORTS, remote_key):
+        try:
+            download_storage_file(f"{BUCKET_REPORTS}/{remote_key}", local_sim)
+        except Exception:
+            logger.info("Using remote simulation URL without local cache: %s", remote_key)
+        return url_for("serve_file", subdir="simulations", filename=sim_filename)
+
+    image_local = resolve_artifact(image_path, UPLOAD_DIR)
+    heatmap_local = resolve_artifact(heatmap_path, HEATMAP_DIR)
+    if not image_local or not heatmap_local:
+        logger.warning(
+            "Cannot regenerate simulation for report %s — missing image/heatmap artifacts",
+            report.get("report_id"),
+        )
+        return None
+
+    history = [dict(row) for row in (progression_rows or [])]
+    if not history:
+        history = [{
+            "status": "Initial",
+            "current_severity": int(report.get("severity") or 0),
+            "date": str(report.get("date") or ""),
+        }]
+
+    try:
+        sim_path = simulate_progression(
+            image_path=image_local,
+            gradcam_path=heatmap_local,
+            progression_history=history,
+        )
+        try:
+            upload_file(sim_path, BUCKET_REPORTS, remote_key)
+        except Exception:
+            logger.warning("Simulation generated but storage upload failed", exc_info=True)
+        return url_for("serve_file", subdir="simulations", filename=Path(sim_path).name)
+    except Exception:
+        logger.warning("Simulation regeneration failed", exc_info=True)
+        return None
+
+
 def _allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -614,10 +684,10 @@ def upload():
         except ValueError as exc:
             logger.warning("Could not plot progression: %s", exc)
 
-        # --- 10. Simulation (only if progression history exists) ------------
+        # --- 10. Disease-spread simulation (Grad-CAM + progression trend) ---
         simulation_path = None
         history = get_progression_history(patient_id)
-        if history and len(history) > 1 and heatmap_path:
+        if heatmap_path and history:
             try:
                 sim_result = simulate_progression(
                     image_path=str(upload_path),
@@ -739,18 +809,6 @@ def result(report_id: int):
             filename=f"progression_{report['patient_id']}.png",
         )
 
-    # Simulation — still served locally
-    simulation_url = None
-    image_path = report.get("image_path", "")
-    if image_path:
-        sim_filename = f"{Path(str(image_path).split('/')[-1]).stem}_simulation.png"
-        # Older uploads used a second timestamp only in their remote object name.
-        if len(sim_filename) > 32 and sim_filename[:8].isdigit() and sim_filename[16:24].isdigit():
-            sim_filename = sim_filename[16:]
-        sim_path = Path(config.SIMULATION_DIR) / sim_filename
-        if sim_path.exists() or (image_path and len(progression) > 1 and report.get("heatmap_path")):
-            simulation_url = url_for("serve_file", subdir="simulations", filename=sim_filename)
-
     # Check for PDF in Supabase Storage or locally
     pdf_exists = True  # PDFs can be restored from private storage after a restart.
 
@@ -760,6 +818,11 @@ def result(report_id: int):
     if not model_used:
         severity_label = "Analysis unavailable"
         latest_status = "Unavailable"
+
+    # Simulation — restore/regenerate only for real model results; never link a stub.
+    simulation_url = None
+    if model_used and report.get("heatmap_path"):
+        simulation_url = ensure_simulation_for_report(dict(report), list(progression or []))
 
     return render_template(
         "result.html",
@@ -999,6 +1062,12 @@ def regenerate_report(report_id: int):
     conn = get_connection()
     try:
         report = conn.execute("SELECT * FROM Reports WHERE report_id = ?", (report_id,)).fetchone()
+        progression_rows = []
+        if report is not None:
+            progression_rows = conn.execute(
+                "SELECT * FROM Progression WHERE patient_id = ? ORDER BY date ASC",
+                (report["patient_id"],),
+            ).fetchall()
     finally:
         conn.close()
     if report is None:
@@ -1011,7 +1080,9 @@ def regenerate_report(report_id: int):
         return redirect(url_for("result", report_id=report_id))
     base = Path(config.BASE_DIR)
     graph = base / "reports" / f"progression_{report['patient_id']}.png"
-    sim = Path(config.SIMULATION_DIR) / f"{Path(str(report['image_path'])).stem}_simulation.png"
+    ensure_simulation_for_report(dict(report), list(progression_rows or []))
+    sim_name = simulation_filename_for_image(report.get("image_path"))
+    sim = Path(config.SIMULATION_DIR) / sim_name if sim_name else None
     try:
         heatmap = resolve_artifact(report["heatmap_path"], HEATMAP_DIR)
         pdf_path = generate_pdf(
@@ -1024,7 +1095,7 @@ def regenerate_report(report_id: int):
             llm_summary=report["llm_summary"],
             heatmap_path=heatmap,
             progression_graph_path=str(graph) if graph.exists() else None,
-            simulation_path=str(sim) if sim.exists() else None,
+            simulation_path=str(sim) if sim and sim.exists() else None,
             report_date=str(report["date"]),
             output_dir=str(REPORT_DIR),
         )
@@ -1109,9 +1180,15 @@ def serve_file(subdir: str, filename: str):
         if p.exists() and p.is_file():
             return send_file(str(p))
 
-    # SVG placeholder
+    # SVG placeholder — never implied to be a real simulation/heatmap.
     logger.warning("File not found: %s/%s", subdir, filename)
-    label = "Retinal Scan" if "heatmap" not in filename.lower() else "Grad-CAM Heatmap"
+    lower = filename.lower()
+    if subdir == "simulations" or "simulation" in lower:
+        label = "Simulation unavailable"
+    elif "heatmap" in lower or "gradcam" in lower:
+        label = "Grad-CAM unavailable"
+    else:
+        label = "Image unavailable"
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">'
            f'<rect width="300" height="300" fill="#1a365d"/>'
            f'<circle cx="150" cy="150" r="100" fill="#2a4365" stroke="#4299e1" stroke-width="2"/>'

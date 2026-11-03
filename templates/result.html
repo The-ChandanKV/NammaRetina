@@ -247,8 +247,11 @@
     {% endif %}
     {% if simulation_url %}
     <div class="card"><h3>Disease spread simulation</h3>
-      <div class="img-frame"><img src="{{ simulation_url }}" alt="Simulation"></div>
-      <p class="note">Probabilistic visualisation — not a clinically validated forecast.</p></div>
+      <div class="img-frame"><img src="{{ simulation_url }}" alt="Illustrative disease-spread simulation based on Grad-CAM attention"></div>
+      <p class="note">Probabilistic visualisation derived from this scan’s Grad-CAM attention and recorded progression trend — not a clinically validated forecast.</p></div>
+    {% elif model_used and heatmap_url %}
+    <div class="card"><h3>Disease spread simulation</h3>
+      <p class="muted" style="margin:0">Simulation could not be generated for this examination (source image or heatmap unavailable).</p></div>
     {% endif %}
   </div>
 </div>

@@ -130,10 +130,31 @@ class RegressionTests(unittest.TestCase):
     def test_new_oauth_accounts_require_approval(self):
         sb = Mock()
         sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        sb.auth.admin.list_users.return_value = SimpleNamespace(users=[])
         self.patch(database, "_get_sb", return_value=sb)
         self.patch(database, "count_users", return_value=1)
         with self.assertRaises(PermissionError):
             database.get_or_create_sso_user("new-user", "new@example.com")
+
+    def test_oauth_links_preprovisioned_email(self):
+        sb = Mock()
+        empty = SimpleNamespace(data=[])
+        role = SimpleNamespace(data=[{"username": "Friend", "role": "doctor"}])
+        # 1) google uid has no role, 2) password uid has role, 3) google uid still no role before insert
+        sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.side_effect = [
+            empty, role, empty
+        ]
+        sb.table.return_value.insert.return_value.execute.return_value = empty
+        sb.auth.admin.list_users.return_value = SimpleNamespace(
+            users=[SimpleNamespace(id="pwd-uid", email="friend@gmail.com")]
+        )
+        self.patch(database, "_get_sb", return_value=sb)
+        self.patch(database, "count_users", return_value=2)
+        result = database.get_or_create_sso_user("google-uid", "friend@gmail.com")
+        self.assertEqual(result["user_id"], "google-uid")
+        self.assertEqual(result["username"], "Friend")
+        self.assertEqual(result["role"], "doctor")
+        sb.table.return_value.insert.assert_called_once()
 
     def test_oauth_retains_requested_destination(self):
         self.patch(web, "exchange_oauth_code", return_value=SimpleNamespace(id="u", email="u@example.com", user_metadata={}))

@@ -402,6 +402,49 @@ def get_user_from_access_token(access_token: str):
     return user_resp.user if user_resp else None
 
 
+def _find_provisioned_role_for_email(email: str) -> Optional[dict]:
+    """Return username/role if an administrator already created this email."""
+    email_norm = (email or "").strip().lower()
+    if not email_norm:
+        return None
+    sb = _get_sb()
+    page = 1
+    per_page = 200
+    while page <= 20:
+        try:
+            response = sb.auth.admin.list_users(page=page, per_page=per_page)
+        except TypeError:
+            response = sb.auth.admin.list_users()
+        users = getattr(response, "users", None)
+        if users is None and isinstance(response, list):
+            users = response
+        users = users or []
+        for auth_user in users:
+            auth_email = (getattr(auth_user, "email", None) or "").strip().lower()
+            if auth_email != email_norm:
+                continue
+            auth_id = str(getattr(auth_user, "id", "") or "")
+            if not auth_id:
+                continue
+            role_row = (
+                sb.table("user_roles")
+                .select("username, role")
+                .eq("user_id", auth_id)
+                .limit(1)
+                .execute()
+            )
+            if role_row.data:
+                return {
+                    "username": role_row.data[0]["username"],
+                    "role": role_row.data[0]["role"],
+                    "source_user_id": auth_id,
+                }
+        if len(users) < per_page:
+            break
+        page += 1
+    return None
+
+
 def get_or_create_sso_user(
     user_id: str,
     email: str,
@@ -410,8 +453,13 @@ def get_or_create_sso_user(
     """
     Ensure an SSO authenticated user has an entry in user_roles.
     Returns a dict with user_id, username, role, email.
+
+    New Google accounts are allowed only when:
+    - this is the first account (becomes admin), or
+    - an administrator already created the same email via Add account.
     """
     sb = _get_sb()
+    email_norm = email.strip().lower() if email else ""
     role_row = (
         sb.table("user_roles")
         .select("user_id, username, role")
@@ -424,16 +472,49 @@ def get_or_create_sso_user(
             "user_id": user_id,
             "username": role_row.data[0]["username"],
             "role": role_row.data[0]["role"],
-            "email": email.strip().lower() if email else "",
+            "email": email_norm,
         }
 
-    # First user gets admin, subsequent get doctor
+    # Admin pre-created this email (password account). Attach the same role to the Google user id.
+    provisioned = _find_provisioned_role_for_email(email_norm)
+    if provisioned:
+        if provisioned["source_user_id"] != user_id:
+            existing_for_google = (
+                sb.table("user_roles")
+                .select("id")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not existing_for_google.data:
+                sb.table("user_roles").insert({
+                    "user_id": user_id,
+                    "username": provisioned["username"],
+                    "role": provisioned["role"],
+                }).execute()
+                logger.info(
+                    "Linked Google SSO user %s to pre-provisioned email role (%s)",
+                    user_id,
+                    email_norm,
+                )
+        return {
+            "user_id": user_id,
+            "username": provisioned["username"],
+            "role": provisioned["role"],
+            "email": email_norm,
+        }
+
+    # First user gets admin, subsequent need administrator provisioning.
     if count_users() > 0:
-        raise PermissionError("Account access requires administrator approval. Ask your administrator to create your account first.")
+        raise PermissionError(
+            "Account access requires administrator approval. "
+            "Ask your administrator to create your account first "
+            "(Add account with this Google email), then sign in with Google again."
+        )
     role = "admin"
 
     # Derive unique display username
-    raw_name = (full_name or (email.split("@")[0] if email else "Doctor")).strip()
+    raw_name = (full_name or (email_norm.split("@")[0] if email_norm else "Doctor")).strip()
     cleaned_name = "".join(c for c in raw_name if c.isalnum() or c in (" ", "_", "-")).strip() or "Doctor"
     username = cleaned_name
 
@@ -463,7 +544,7 @@ def get_or_create_sso_user(
         "user_id": user_id,
         "username": username,
         "role": role,
-        "email": email.strip().lower() if email else "",
+        "email": email_norm,
     }
 
 

@@ -18,7 +18,7 @@
     window.location.replace("{{ url_for('auth_callback') }}?" + hash);
   } else {
     setTimeout(function() {
-      window.location.replace("{{ url_for('login') }}");
+      window.location.replace("{{ url_for('signin') }}");
     }, 2500);
   }
 </script>

@@ -222,11 +222,11 @@ def file_url_filter(rel_path: str | None) -> str:
 
 
 def login_required(view):
-    """Redirect anonymous users to /login, preserving the intended destination."""
+    """Redirect anonymous users to /signin, preserving the intended destination."""
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not session.get("user_id"):
-            return redirect(url_for("login", next=request.path))
+            return redirect(url_for("signin", next=request.path))
         return view(*args, **kwargs)
     return wrapped
 
@@ -237,7 +237,7 @@ def register():
     first_account = count_users() == 0
     if not first_account and session.get("role") != "admin":
         flash("Account registration is restricted. Ask your administrator for access.", "warning")
-        return redirect(url_for("login"))
+        return redirect(url_for("signin"))
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         email    = request.form.get("email", "").strip().lower()
@@ -272,34 +272,56 @@ def register():
         session["username"] = username
         session["role"] = role
         flash(f"Welcome, {username}! Your account has been created.", "success")
-        return redirect(url_for("index"))
+        return redirect(url_for("dashboard"))
 
     return render_template("register.html", first_account=first_account)
 
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    """Authenticate via Supabase Auth (email + password)."""
+def _safe_next_url(default_endpoint: str = "dashboard") -> str:
+    """Return a same-origin relative next URL, else the default doctor destination."""
+    next_url = request.args.get("next") or request.form.get("next") or ""
+    if next_url.startswith("/") and not next_url.startswith("//"):
+        # Keep auth pages from bouncing signed-in users back into the login shell.
+        if next_url.rstrip("/") in {"/login", "/signin"}:
+            return url_for(default_endpoint)
+        return next_url
+    return url_for(default_endpoint)
+
+
+def _auth_signin_view():
+    """Shared email/password sign-in handler for /signin and /login."""
+    if session.get("user_id") and request.method == "GET":
+        return redirect(_safe_next_url("dashboard"))
+
     if request.method == "POST":
-        email    = request.form.get("email", "").strip().lower()
+        email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         user = verify_user(email, password)
         if user is None:
             flash("Invalid email or password.", "danger")
-            return redirect(url_for("login"))
+            return redirect(url_for("signin"))
 
         session.clear()
         session["user_id"] = user["user_id"]
         session["username"] = user["username"]
         session["role"] = user["role"]
 
-        next_url = request.args.get("next") or ""
-        if not next_url.startswith("/") or next_url.startswith("//"):
-            next_url = url_for("index")
         flash(f"Welcome back, {user['username']}!", "success")
-        return redirect(next_url)
+        return redirect(_safe_next_url("dashboard"))
 
     return render_template("login.html")
+
+
+@app.route("/signin", methods=["GET", "POST"])
+def signin():
+    """Primary public sign-in page (no doctor sidebar)."""
+    return _auth_signin_view()
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Back-compat alias for /signin."""
+    return _auth_signin_view()
 
 
 @app.route("/logout", methods=["POST"])
@@ -325,7 +347,7 @@ def auth_google():
     except Exception as exc:
         logger.error("Failed to generate Google OAuth URL: %s", exc)
         flash(f"Could not initiate Google sign in: {exc}", "danger")
-        return redirect(url_for("login"))
+        return redirect(url_for("signin"))
 
 
 @app.route("/auth/callback")
@@ -338,7 +360,7 @@ def auth_callback():
             flash("Google Sign-In is not enabled yet in your Supabase project. In Supabase Dashboard, go to Authentication → Providers → Google and enable it.", "warning")
         else:
             flash(f"Google sign in failed: {error}", "danger")
-        return redirect(url_for("login"))
+        return redirect(url_for("signin"))
 
     code = request.args.get("code")
     access_token = request.args.get("access_token")
@@ -355,18 +377,18 @@ def auth_callback():
         except Exception as exc:
             logger.error("Failed to exchange OAuth code: %s", exc)
             flash(f"Authentication failed: {exc}", "danger")
-            return redirect(url_for("login"))
+            return redirect(url_for("signin"))
     elif access_token:
         try:
             user = get_user_from_access_token(access_token)
         except Exception as exc:
             logger.error("Failed to retrieve user from access token: %s", exc)
             flash(f"Authentication failed: {exc}", "danger")
-            return redirect(url_for("login"))
+            return redirect(url_for("signin"))
 
     if not user:
         flash("Could not retrieve your user details from Google.", "danger")
-        return redirect(url_for("login"))
+        return redirect(url_for("signin"))
 
     full_name = None
     if hasattr(user, "user_metadata") and isinstance(user.user_metadata, dict):
@@ -381,7 +403,7 @@ def auth_callback():
     except Exception as exc:
         logger.error("Failed to provision SSO user: %s", exc)
         flash(f"Account setup failed: {exc}", "danger")
-        return redirect(url_for("login"))
+        return redirect(url_for("signin"))
 
     next_url = session.get("next_url")
     session.clear()
@@ -393,7 +415,7 @@ def auth_callback():
     flash(f"Welcome, {user_record['username']}! Signed in with Google.", "success")
     if next_url and next_url.startswith("/") and not next_url.startswith("//"):
         return redirect(next_url)
-    return redirect(url_for("index"))
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/")
@@ -407,7 +429,7 @@ def landing():
             "or build with: cd landing-source && npm install && npm run build",
             "warning",
         )
-        return redirect(url_for("login"))
+        return redirect(url_for("signin"))
     response = send_from_directory(LANDING_DIR, "index.html")
     response.headers["Cache-Control"] = "no-cache"
     return response

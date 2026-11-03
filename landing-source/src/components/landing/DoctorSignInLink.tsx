@@ -7,8 +7,8 @@ type Props = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
 };
 
 /**
- * Full-document navigation to Flask `/login`.
- * Must NOT use React Router — otherwise the SPA would intercept `/login`.
+ * Full-document navigation to Flask `/signin`.
+ * Must NOT use React Router — otherwise the SPA would intercept the auth route.
  */
 export function DoctorSignInLink({ children, ...rest }: Props) {
   return (

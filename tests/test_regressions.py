@@ -127,14 +127,19 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["status"], "ok")
 
-    def test_new_oauth_accounts_require_approval(self):
+    def test_new_oauth_accounts_auto_provision_as_doctor(self):
         sb = Mock()
-        sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
+        empty = SimpleNamespace(data=[])
+        sb.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = empty
+        sb.table.return_value.select.return_value.ilike.return_value.limit.return_value.execute.return_value = empty
+        sb.table.return_value.insert.return_value.execute.return_value = empty
         sb.auth.admin.list_users.return_value = SimpleNamespace(users=[])
         self.patch(database, "_get_sb", return_value=sb)
         self.patch(database, "count_users", return_value=1)
-        with self.assertRaises(PermissionError):
-            database.get_or_create_sso_user("new-user", "new@example.com")
+        result = database.get_or_create_sso_user("new-user", "new@example.com", full_name="New Doctor")
+        self.assertEqual(result["role"], "doctor")
+        self.assertEqual(result["user_id"], "new-user")
+        sb.table.return_value.insert.assert_called_once()
 
     def test_oauth_links_preprovisioned_email(self):
         sb = Mock()

@@ -454,9 +454,10 @@ def get_or_create_sso_user(
     Ensure an SSO authenticated user has an entry in user_roles.
     Returns a dict with user_id, username, role, email.
 
-    New Google accounts are allowed only when:
-    - this is the first account (becomes admin), or
-    - an administrator already created the same email via Add account.
+    Google sign-in is seamless:
+    - first account becomes admin
+    - later Google accounts are auto-provisioned as doctor
+    - if an admin already created the same email, reuse that username/role
     """
     sb = _get_sb()
     email_norm = email.strip().lower() if email else ""
@@ -504,14 +505,8 @@ def get_or_create_sso_user(
             "email": email_norm,
         }
 
-    # First user gets admin, subsequent need administrator provisioning.
-    if count_users() > 0:
-        raise PermissionError(
-            "Account access requires administrator approval. "
-            "Ask your administrator to create your account first "
-            "(Add account with this Google email), then sign in with Google again."
-        )
-    role = "admin"
+    # First Google/user account becomes admin; everyone else is a doctor.
+    role = "admin" if count_users() == 0 else "doctor"
 
     # Derive unique display username
     raw_name = (full_name or (email_norm.split("@")[0] if email_norm else "Doctor")).strip()

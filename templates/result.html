@@ -13,13 +13,21 @@
   </div>
   <div style="display:flex;gap:.55rem;flex-wrap:wrap">
     <a id="btn-rescan" class="btn" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ Follow-up scan</a>
+    {% if model_used and image_available %}
     <a id="btn-xai" class="btn" href="{{ url_for('xai_explain', report_id=report.report_id) }}">Explain AI decision</a>
     <form method="POST" action="{{ url_for('regenerate_report', report_id=report.report_id) }}" style="margin:0">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button id="btn-regen" class="btn" type="submit">Regenerate PDF</button></form>
+    {% endif %}
     {% if pdf_exists and model_used %}<a id="btn-pdf" class="btn btn-primary" href="{{ url_for('download_report', report_id=report.report_id) }}">Export PDF Report</a>{% endif %}
   </div>
 </div>
+
+{% if media_missing %}
+<div class="flash flash-warning" role="alert">
+  <span>Scan images for this report are missing from storage. Severity text below may still reflect a recorded score, but Grad-CAM, simulation, XAI, and PDF actions stay unavailable until a new scan is uploaded.</span>
+</div>
+{% endif %}
 
 <div class="grid grid-2">
   <div>
@@ -137,13 +145,14 @@
 
   <div>
     <div class="card"><h3>Scan &amp; Grad-CAM</h3>
+      {% if image_available %}
       <div class="compare">
         <div>
           <div class="img-frame"><img src="{{ image_url }}" alt="Original retinal scan"></div>
           <p class="note">Original Retinal Image</p>
         </div>
         <div>
-          {% if heatmap_url %}
+          {% if heatmap_available and heatmap_url %}
           <div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap"></div>
           <p class="note">Regions the AI Focused On</p>
           {% else %}
@@ -152,7 +161,7 @@
         </div>
       </div>
 
-      {% if heatmap_url %}
+      {% if heatmap_available and heatmap_url %}
       <div class="gradcam-overlay-block" data-gradcam-overlay>
         <div class="img-frame gradcam-blend" id="gradcam-blend">
           <img src="{{ image_url }}" alt="" aria-hidden="true" class="gradcam-base" draggable="false">
@@ -240,6 +249,10 @@
       })();
       </script>
       {% endif %}
+      {% else %}
+      <p class="muted" style="margin:0">Original retinal image is not available in storage for this report.</p>
+      <p class="note">Upload a follow-up scan for this patient to create a complete examination record.</p>
+      {% endif %}
     </div>
     {% if progression_graph_url %}
     <div class="card"><h3>Progression history</h3>
@@ -249,9 +262,9 @@
     <div class="card"><h3>Disease spread simulation</h3>
       <div class="img-frame"><img src="{{ simulation_url }}" alt="Illustrative disease-spread simulation based on Grad-CAM attention"></div>
       <p class="note">Probabilistic visualisation derived from this scan’s Grad-CAM attention and recorded progression trend — not a clinically validated forecast.</p></div>
-    {% elif model_used and heatmap_url %}
+    {% elif model_used and image_available and heatmap_available %}
     <div class="card"><h3>Disease spread simulation</h3>
-      <p class="muted" style="margin:0">Simulation could not be generated for this examination (source image or heatmap unavailable).</p></div>
+      <p class="muted" style="margin:0">Simulation could not be generated for this examination.</p></div>
     {% endif %}
   </div>
 </div>

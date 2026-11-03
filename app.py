@@ -59,6 +59,7 @@ from database import (
     download_storage_file,
     get_report,
     DatabaseUnavailable,
+    storage_object_exists,
 )
 from gradcam import generate_gradcam
 from llm_agent import explain_report
@@ -796,9 +797,20 @@ def result(report_id: int):
     severity_label = config.DR_CLASSES.get(severity, "Unknown")
     confidence_pct = round(float(report["confidence"]) * 100, 1)
 
-    # Generate signed URLs from Supabase Storage
-    image_url = db_path_to_url(report.get("image_path"))
-    heatmap_url = db_path_to_url(report["heatmap_path"]) if report.get("heatmap_path") else ""
+    # Only expose media URLs when the underlying artifact actually exists.
+    image_path = report.get("image_path")
+    heatmap_path = report.get("heatmap_path")
+    image_available = bool(image_path) and (
+        storage_object_exists(str(image_path))
+        or bool(resolve_artifact(image_path, UPLOAD_DIR))
+    )
+    heatmap_available = bool(heatmap_path) and (
+        storage_object_exists(str(heatmap_path))
+        or bool(resolve_artifact(heatmap_path, HEATMAP_DIR))
+    )
+    image_url = db_path_to_url(image_path) if image_available else ""
+    heatmap_url = db_path_to_url(heatmap_path) if heatmap_available else ""
+    media_missing = not image_available
 
     # Progression graph — still served locally (generated at runtime)
     progression_graph = Path(config.BASE_DIR) / "reports" / f"progression_{report['patient_id']}.png"
@@ -809,9 +821,6 @@ def result(report_id: int):
             filename=f"progression_{report['patient_id']}.png",
         )
 
-    # Check for PDF in Supabase Storage or locally
-    pdf_exists = True  # PDFs can be restored from private storage after a restart.
-
     # A confidence of 0 means no real model ran (see model_loader fallback); the
     # template shows "N/A" rather than a fabricated 0.0% in that case.
     model_used = float(report["confidence"]) > 0
@@ -819,9 +828,18 @@ def result(report_id: int):
         severity_label = "Analysis unavailable"
         latest_status = "Unavailable"
 
-    # Simulation — restore/regenerate only for real model results; never link a stub.
+    # Incomplete / stub summaries should use the template fallback explanation.
+    raw_summary = (report.get("llm_summary") or "").strip()
+    summary_is_stub = raw_summary.lower() in {
+        "placeholder", "(pending)", "pending", "", "none", "null",
+    }
+
+    # PDF actions only when prediction + source scan exist (regenerate can rebuild).
+    pdf_exists = bool(model_used and image_available)
+
+    # Simulation — restore/regenerate only when both scan + heatmap exist.
     simulation_url = None
-    if model_used and report.get("heatmap_path"):
+    if model_used and image_available and heatmap_available:
         simulation_url = ensure_simulation_for_report(dict(report), list(progression or []))
 
     return render_template(
@@ -832,11 +850,17 @@ def result(report_id: int):
         severity_label=severity_label,
         confidence_pct=confidence_pct,
         recommendation=report["recommendation"] if model_used else "A new scan analysis with a loaded model is required.",
-        llm_summary=report["llm_summary"] if model_used else "No model prediction was made for this record. It cannot establish severity or progression.",
+        llm_summary=(
+            "" if summary_is_stub else
+            (report["llm_summary"] if model_used else "No model prediction was made for this record. It cannot establish severity or progression.")
+        ),
         progression_status=latest_status,
         progression=progression,
         image_url=image_url,
         heatmap_url=heatmap_url,
+        image_available=image_available,
+        heatmap_available=heatmap_available,
+        media_missing=media_missing,
         progression_graph_url=progression_graph_url,
         simulation_url=simulation_url,
         pdf_exists=pdf_exists,

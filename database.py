@@ -560,6 +560,22 @@ def storage_path_to_signed_url(storage_path: str) -> Optional[str]:
     return None
 
 
+def storage_object_exists(storage_path: str) -> bool:
+    """Return True when a private Storage object can be listed in its folder."""
+    if not storage_path or storage_path == "None" or "/" not in str(storage_path):
+        return False
+    bucket, remote = str(storage_path).split("/", 1)
+    if bucket not in {BUCKET_IMAGES, BUCKET_HEATMAPS, BUCKET_REPORTS} or not remote:
+        return False
+    folder, _, name = remote.rpartition("/")
+    try:
+        items = _get_sb().storage.from_(bucket).list(folder or "") or []
+        return any(item.get("name") == name for item in items)
+    except Exception as exc:
+        logger.warning("Storage existence check failed for %s: %s", storage_path, exc)
+        return False
+
+
 # ── Compatibility: add_report uses raw conn in app.py in one place ────────────
 # app.py does:  conn.execute("UPDATE Reports SET llm_summary=? WHERE report_id=?")
 # We patch that by making the "connection" object returned by get_connection()

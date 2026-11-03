@@ -506,6 +506,12 @@ def auth_callback():
     return redirect(url_for("dashboard"))
 
 
+@app.route("/privacy")
+def privacy_policy():
+    """Public privacy policy for OAuth / App Store consent requirements."""
+    return render_template("privacy.html")
+
+
 @app.route("/")
 def landing():
     """Public Vite landing page (no authentication)."""

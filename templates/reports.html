@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="page-kicker">Diagnostic archive</p>
+    <h1>Reports</h1>
+    <p class="page-sub">All screening reports across patients · {{ total_reports }} total</p>
+  </div>
+  <a id="btn-new-scan" href="{{ url_for('index') }}" class="btn btn-primary">New Screening</a>
+</div>
+
+{% if report_rows %}
+<div class="card">
+  <div class="toolbar">
+    <input id="reportSearch" type="search" placeholder="Search by patient, report ID, or severity…">
+    <select id="reportSevFilter" aria-label="Filter by severity">
+      <option value="">All severities</option>
+      {% for k, v in dr_classes.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+      <option value="na">Analysis unavailable</option>
+    </select>
+  </div>
+  <div class="table-wrap">
+    <table id="reportsTable">
+      <thead>
+        <tr>
+          <th>Report</th>
+          <th>Patient</th>
+          <th>Date</th>
+          <th>Severity</th>
+          <th>Confidence</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report_rows %}
+        {% set r = row.report %}
+        {% set p = row.patient %}
+        <tr
+          data-name="{{ (p.name if p else '')|lower }} {{ r.report_id }} {{ row.severity_label|lower }}"
+          data-sev="{{ row.severity if row.severity is not none else 'na' }}">
+          <td>
+            <a href="{{ url_for('result', report_id=r.report_id) }}">#{{ r.report_id }}</a>
+          </td>
+          <td>
+            {% if p %}
+            <a href="{{ url_for('patient_detail', patient_id=p.patient_id) }}">{{ p.name }}</a>
+            <span class="muted">#{{ p.patient_id }}</span>
+            {% else %}
+            <span class="muted">Patient #{{ r.patient_id }}</span>
+            {% endif %}
+          </td>
+          <td class="muted">{{ r.date or '—' }}</td>
+          <td>
+            {% if row.model_used %}
+            <span class="sev sev-{{ row.severity }}">{{ row.severity_label }}</span>
+            {% else %}
+            <span class="muted">{{ row.severity_label }}</span>
+            {% endif %}
+          </td>
+          <td class="muted">{% if row.confidence_pct is not none %}{{ row.confidence_pct }}%{% else %}—{% endif %}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <a class="btn btn-sm" href="{{ url_for('result', report_id=r.report_id) }}">Open</a>
+            {% if row.model_used %}
+            <a class="btn btn-sm" href="{{ url_for('xai_explain', report_id=r.report_id) }}">XAI</a>
+            <a class="btn btn-sm btn-primary" href="{{ url_for('download_report', report_id=r.report_id) }}">PDF</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p id="reportNoMatch" class="empty" style="display:none">No reports match.</p>
+</div>
+{% else %}
+<div class="card empty">
+  <h2>No reports yet</h2>
+  <p>Upload a retinal scan to generate the first diagnostic report.</p>
+  <a class="btn btn-primary" href="{{ url_for('index') }}">New Screening</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var s = document.getElementById('reportSearch');
+  var f = document.getElementById('reportSevFilter');
+  var empty = document.getElementById('reportNoMatch');
+  if (!s || !f) return;
+  function apply() {
+    var q = s.value.toLowerCase().trim();
+    var sev = f.value;
+    var n = 0;
+    document.querySelectorAll('#reportsTable tbody tr').forEach(function (tr) {
+      var ok = tr.dataset.name.includes(q) && (!sev || tr.dataset.sev === sev);
+      tr.style.display = ok ? '' : 'none';
+      if (ok) n++;
+    });
+    if (empty) empty.style.display = n ? 'none' : 'block';
+  }
+  s.addEventListener('input', apply);
+  f.addEventListener('change', apply);
+})();
+</script>
+{% endblock %}

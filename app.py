@@ -58,6 +58,7 @@ from database import (
     get_or_create_sso_user,
     download_storage_file,
     get_report,
+    get_all_reports,
     DatabaseUnavailable,
     storage_object_exists,
 )
@@ -1020,6 +1021,41 @@ def evaluation_dashboard():
         "evaluation.html",
         evaluation=evaluation or latest_evaluation(),
         runs=runs,
+    )
+
+
+@app.route("/reports")
+@login_required
+def reports_list():
+    """List every diagnostic report across all patients."""
+    reports = get_all_reports()
+    rows = []
+    patient_cache: dict[int, dict | None] = {}
+    for report in reports:
+        pid = int(report["patient_id"])
+        if pid not in patient_cache:
+            patient_cache[pid] = get_patient(pid)
+        patient = patient_cache[pid]
+        confidence = float(report.get("confidence") or 0)
+        model_used = confidence > 0
+        severity = int(report.get("severity") or 0) if model_used else None
+        rows.append(
+            {
+                "report": report,
+                "patient": patient,
+                "model_used": model_used,
+                "severity": severity,
+                "severity_label": (
+                    config.DR_CLASSES.get(severity, "Unknown") if model_used else "Analysis unavailable"
+                ),
+                "confidence_pct": round(confidence * 100, 1) if model_used else None,
+            }
+        )
+    return render_template(
+        "reports.html",
+        report_rows=rows,
+        dr_classes=config.DR_CLASSES,
+        total_reports=len(rows),
     )
 
 

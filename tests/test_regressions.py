@@ -88,7 +88,7 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
 
     def test_anonymous_routes_require_login(self):
-        for path in ["/scan", "/dashboard", "/result/7", "/xai/7", "/download/7", "/files/uploads/scan.png"]:
+        for path in ["/scan", "/dashboard", "/reports", "/result/7", "/xai/7", "/download/7", "/files/uploads/scan.png"]:
             self.assertEqual(self.client.get(path).status_code, 302)
 
     def test_csrf_rejects_missing_and_invalid_token(self):
@@ -309,6 +309,16 @@ class RegressionTests(unittest.TestCase):
         response = self.client.get("/result/7")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"status-Initial", response.data)
+
+    def test_reports_list_shows_all_reports(self):
+        self.login()
+        self.patch(web, "get_all_reports", return_value=[self.report])
+        self.patch(web, "get_patient", return_value=self.patient)
+        response = self.client.get("/reports")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Reports", response.data)
+        self.assertIn(b"#7", response.data)
+        self.assertIn(b"Test Patient", response.data)
 
     def test_followup_form_contains_patient_id(self):
         self.login()

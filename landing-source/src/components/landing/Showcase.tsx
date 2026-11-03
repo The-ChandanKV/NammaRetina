@@ -1,111 +1,308 @@
-import { useRef, useState } from "react";
-import { ChevronsLeftRight, FileCheck2, FileImage, Layers, ListChecks, Stethoscope, type LucideIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  FileCheck2,
+  FileImage,
+  Layers,
+  ListChecks,
+  Stethoscope,
+  type LucideIcon,
+} from "lucide-react";
 
 import { Reveal, SectionHeading } from "./Reveal";
 import fundusPrimary from "@/assets/fundus-primary.jpg";
 import fundusHeatmap from "@/assets/fundus-heatmap.jpg";
 
-const MIN_POS = 4;
-const MAX_POS = 96;
+type OverlayMode = "original" | "overlay";
 
-function CompareSlider() {
-  const [pos, setPos] = useState(50);
-  const [dragging, setDragging] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load ${src}`));
+    img.src = src;
+  });
+}
 
-  const updateFromClientX = (clientX: number) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect || rect.width === 0) return;
-    const next = ((clientX - rect.left) / rect.width) * 100;
-    setPos(Math.min(MAX_POS, Math.max(MIN_POS, next)));
-  };
+/**
+ * Builds a translucent heat-only layer from the illustrative heatmap asset by
+ * keeping warm/cyan attention colors and clearing near-neutral fundus tones.
+ * Result is spatially aligned with the original photograph.
+ */
+async function buildHeatOnlyCanvas(
+  heatSrc: string,
+  size = 768,
+): Promise<HTMLCanvasElement> {
+  const heat = await loadImage(heatSrc);
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return canvas;
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(heat, 0, 0, size, size);
+  const image = ctx.getImageData(0, 0, size, size);
+  const { data } = image;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const sat = max === 0 ? 0 : (max - min) / max;
+    const warmth = (r - b) / 255;
+    const cyanBias = (g + b - 2 * r) / 255;
+    // Keep vivid heat / teal attention pixels; drop fundus-like neutrals.
+    const heatScore = Math.max(0, sat - 0.18) * 1.35 + Math.max(0, warmth) * 0.55 + Math.max(0, cyanBias) * 0.35;
+    const alpha = Math.min(255, Math.round(heatScore * 220));
+    data[i + 3] = alpha < 18 ? 0 : alpha;
+  }
+
+  ctx.putImageData(image, 0, 0);
+  // Soften blockiness without inventing new hotspots.
+  const soft = document.createElement("canvas");
+  soft.width = size;
+  soft.height = size;
+  const softCtx = soft.getContext("2d");
+  if (softCtx) {
+    softCtx.filter = "blur(1.2px)";
+    softCtx.drawImage(canvas, 0, 0);
+    return soft;
+  }
+  return canvas;
+}
+
+interface VizFrameProps {
+  label: string;
+  src: string;
+  alt: string;
+  badge?: string;
+}
+
+function VizFrame({ label, src, alt, badge }: VizFrameProps) {
+  return (
+    <figure className="flex flex-col gap-3">
+      <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 shadow-[0_40px_100px_-48px_rgb(0_0_0_/_0.85)]">
+        <img
+          src={src}
+          width={1024}
+          height={1024}
+          loading="lazy"
+          alt={alt}
+          className="aspect-square w-full object-cover"
+          draggable={false}
+        />
+        {badge ? (
+          <span className="absolute left-4 top-4 rounded-full border border-white/15 bg-black/55 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm">
+            {badge}
+          </span>
+        ) : null}
+      </div>
+      <figcaption className="text-center text-sm font-semibold text-night-foreground">
+        {label}
+      </figcaption>
+    </figure>
+  );
+}
+
+function GradCamOverlayDemo() {
+  const sliderId = useId();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const heatLayerRef = useRef<HTMLCanvasElement | null>(null);
+  const primaryRef = useRef<HTMLImageElement | null>(null);
+  const [intensity, setIntensity] = useState(62);
+  const [mode, setMode] = useState<OverlayMode>("overlay");
+  const [ready, setReady] = useState(false);
+
+  const effectiveIntensity = mode === "original" ? 0 : intensity;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function prepare() {
+      try {
+        const [primary, heatLayer] = await Promise.all([
+          loadImage(fundusPrimary),
+          buildHeatOnlyCanvas(fundusHeatmap),
+        ]);
+        if (cancelled) return;
+        primaryRef.current = primary;
+        heatLayerRef.current = heatLayer;
+        setReady(true);
+      } catch {
+        if (!cancelled) setReady(false);
+      }
+    }
+
+    void prepare();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const primary = primaryRef.current;
+    const heatLayer = heatLayerRef.current;
+    if (!canvas || !primary || !heatLayer || !ready) return;
+
+    const size = 768;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(primary, 0, 0, size, size);
+
+    const opacity = Math.min(1, Math.max(0, effectiveIntensity / 100));
+    if (opacity > 0) {
+      ctx.save();
+      // Cap below 1 so retinal vessels remain readable at "100%".
+      ctx.globalAlpha = 0.18 + opacity * 0.72;
+      ctx.drawImage(heatLayer, 0, 0, size, size);
+      ctx.restore();
+    }
+  }, [effectiveIntensity, ready]);
 
   return (
-    <div
-      ref={containerRef}
-      className="group relative aspect-square w-full max-w-xl cursor-ew-resize touch-none select-none overflow-hidden rounded-3xl border border-white/10 shadow-[0_50px_120px_-40px_rgb(0_0_0_/_0.8)]"
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        setDragging(true);
-        updateFromClientX(e.clientX);
-      }}
-      onPointerMove={(e) => {
-        if (dragging) updateFromClientX(e.clientX);
-      }}
-      onPointerUp={() => setDragging(false)}
-      onPointerCancel={() => setDragging(false)}
-    >
-      {/* before: original fundus image */}
-      <img
-        src={fundusPrimary}
-        width={1024}
-        height={1024}
-        loading="lazy"
-        alt="Example retinal fundus image (demonstration data)"
-        className="absolute inset-0 h-full w-full object-cover"
-        draggable={false}
-      />
-      {/* after: simulated Grad-CAM overlay, clipped to the right of the handle */}
-      <img
-        src={fundusHeatmap}
-        width={1024}
-        height={1024}
-        loading="lazy"
-        alt="The same example image with a simulated Grad-CAM-style visual explanation overlay (demonstration data)"
-        className="absolute inset-0 h-full w-full object-cover"
-        style={{ clipPath: `inset(0 0 0 ${pos}%)` }}
-        draggable={false}
-      />
+    <div className="mx-auto w-full max-w-3xl">
+      <figure className="flex flex-col gap-4">
+        <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 shadow-[0_50px_120px_-40px_rgb(0_0_0_/_0.8)]">
+          {/* CSS fallback keeps layout stable while the canvas heat layer prepares */}
+          <img
+            src={fundusPrimary}
+            width={1024}
+            height={1024}
+            loading="lazy"
+            alt=""
+            aria-hidden="true"
+            className={`aspect-square w-full object-cover ${ready ? "invisible absolute inset-0" : ""}`}
+            draggable={false}
+          />
+          {!ready ? (
+            <img
+              src={fundusHeatmap}
+              width={1024}
+              height={1024}
+              loading="lazy"
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+              style={{ opacity: effectiveIntensity / 100 }}
+              draggable={false}
+            />
+          ) : null}
+          <canvas
+            ref={canvasRef}
+            className={`aspect-square h-auto w-full ${ready ? "" : "absolute inset-0 opacity-0"}`}
+            role="img"
+            aria-label="Illustrative Grad-CAM overlay on an example retinal fundus photograph (demonstration data)"
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/55 via-black/15 to-transparent px-5 pb-4 pt-16">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/80">
+              Grad-CAM Overlay · Illustrative
+            </p>
+          </div>
+        </div>
 
-      {/* corner labels */}
-      <span className="absolute left-4 top-4 rounded-full bg-black/55 px-3 py-1 text-[11px] font-semibold tracking-wide text-white backdrop-blur-sm">
-        Fundus Image
-      </span>
-      <span className="absolute right-4 top-4 rounded-full bg-black/55 px-3 py-1 text-[11px] font-semibold tracking-wide text-white backdrop-blur-sm">
-        Visual Explanation
-      </span>
+        <figcaption className="space-y-2 text-center">
+          <p className="text-sm font-semibold text-night-foreground">Grad-CAM Overlay</p>
+          <p className="mx-auto max-w-xl text-sm leading-relaxed text-night-muted">
+            Explore how a Grad-CAM-style heatmap can be superimposed on retinal imagery to visualize
+            regions influencing an AI assessment.
+          </p>
+          <p className="mx-auto max-w-xl text-xs leading-relaxed text-night-muted/90">
+            Illustrative visualization for demonstration purposes. Highlighted regions do not
+            necessarily indicate retinal disease.
+          </p>
+        </figcaption>
+      </figure>
 
-      {/* drag handle */}
-      <div
-        role="slider"
-        tabIndex={0}
-        aria-label="Comparison slider: drag or use arrow keys to reveal the simulated Grad-CAM overlay"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(pos)}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
-            e.preventDefault();
-            setPos((p) => Math.max(MIN_POS, p - 4));
-          } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
-            e.preventDefault();
-            setPos((p) => Math.min(MAX_POS, p + 4));
-          }
-        }}
-        className="absolute inset-y-0 z-10 w-0 outline-none"
-        style={{ left: `${pos}%` }}
-      >
-        <div className="absolute inset-y-0 -left-px w-0.5 bg-white/90 shadow-[0_0_18px_rgb(255_255_255_/_0.6)]" />
-        <button
-          type="button"
-          tabIndex={-1}
-          className="absolute left-1/2 top-1/2 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-white/15 text-white backdrop-blur-md transition-transform group-hover:scale-105"
-          aria-hidden="true"
+      <div className="mt-6 space-y-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-sm sm:p-5">
+        <div
+          className="flex flex-wrap items-center justify-center gap-2"
+          role="group"
+          aria-label="Overlay display mode"
         >
-          <ChevronsLeftRight className="h-5 w-5" />
-        </button>
+          {(
+            [
+              { id: "original", label: "Original" },
+              { id: "overlay", label: "Grad-CAM Overlay" },
+            ] as const
+          ).map((option) => {
+            const active = mode === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setMode(option.id)}
+                className={`rounded-full px-4 py-1.5 text-xs font-semibold tracking-wide transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklab,var(--color-primary)_70%,white)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-night)] ${
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : "border border-white/15 bg-white/[0.04] text-night-muted hover:border-white/25 hover:text-night-foreground"
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mx-auto flex w-full max-w-md flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <label htmlFor={sliderId} className="text-xs font-semibold text-night-foreground">
+              Heatmap Intensity
+            </label>
+            <span className="tabular-nums text-xs font-medium text-night-muted" aria-live="polite">
+              {effectiveIntensity}%
+            </span>
+          </div>
+          <input
+            id={sliderId}
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={effectiveIntensity}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setIntensity(next);
+              setMode(next === 0 ? "original" : "overlay");
+            }}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={effectiveIntensity}
+            aria-valuetext={
+              effectiveIntensity === 0
+                ? "Original image only"
+                : `${effectiveIntensity} percent heatmap intensity`
+            }
+            className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-[var(--color-primary)] [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-[var(--color-primary)] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[var(--color-primary)] [&::-webkit-slider-thumb]:shadow-[0_0_0_3px_rgb(255_255_255_/_0.12)]"
+          />
+          <div className="flex justify-between text-[10px] uppercase tracking-[0.12em] text-night-muted">
+            <span>0% · Original</span>
+            <span>100% · Strongest overlay</span>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-interface Panel {
+interface PanelProps {
   icon: LucideIcon;
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
-function Panel({ icon: Icon, title, children }: Panel) {
+function Panel({ icon: Icon, title, children }: PanelProps) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 backdrop-blur-sm transition-colors hover:border-white/20">
       <div className="flex items-center gap-2.5">
@@ -134,7 +331,6 @@ export function Showcase() {
       className="relative scroll-mt-24 overflow-hidden bg-night py-20 text-night-foreground sm:py-24 lg:py-28"
       aria-labelledby="showcase-heading"
     >
-      {/* ambience: fine grid + soft glows */}
       <div className="pointer-events-none absolute inset-0" aria-hidden="true">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgb(255_255_255_/_0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgb(255_255_255_/_0.04)_1px,transparent_1px)] bg-[size:56px_56px] [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_75%)]" />
         <div className="absolute -left-40 top-10 h-96 w-96 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--color-primary)_20%,transparent),transparent_70%)] blur-3xl" />
@@ -142,25 +338,39 @@ export function Showcase() {
       </div>
 
       <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <SectionHeading
-          dark
-          eyebrow="Interactive Showcase"
-          title="Every Pixel Tells a Story."
-          description="Explore how AI-assisted visual explanations can help clinicians inspect retinal screening results."
-        />
+        <div id="showcase-heading">
+          <SectionHeading
+            dark
+            eyebrow="Interactive Showcase"
+            title="SCAN & GRAD-CAM"
+            description="Explore how AI-assisted visual explanations can help clinicians inspect retinal screening results."
+          />
+        </div>
 
-        <Reveal delay={0.1} className="mt-14 flex justify-center">
-          <CompareSlider />
+        {/* Row 1 — existing original + standalone heatmap */}
+        <div className="mx-auto mt-14 grid max-w-5xl gap-6 md:grid-cols-2 md:gap-8">
+          <Reveal delay={0.05}>
+            <VizFrame
+              label="Original Retinal Image"
+              src={fundusPrimary}
+              alt="Example retinal fundus image (demonstration data)"
+            />
+          </Reveal>
+          <Reveal delay={0.1}>
+            <VizFrame
+              label="Regions the AI Focused On"
+              src={fundusHeatmap}
+              alt="Simulated Grad-CAM heatmap highlighting illustrative regions of model attention (demonstration data)"
+              badge="Illustrative"
+            />
+          </Reveal>
+        </div>
+
+        {/* Row 2 — integrated Grad-CAM overlay */}
+        <Reveal delay={0.15} className="mt-10 sm:mt-12">
+          <GradCamOverlayDemo />
         </Reveal>
 
-        <Reveal delay={0.15}>
-          <p className="mt-6 text-center text-xs text-night-muted">
-            Drag the slider (or use arrow keys) to compare the example fundus image with a simulated
-            Grad-CAM-style overlay.
-          </p>
-        </Reveal>
-
-        {/* example interface panels */}
         <div className="mx-auto mt-12 grid max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Reveal delay={0.05}>
             <Panel icon={FileImage} title="Retinal Image">
@@ -214,8 +424,8 @@ export function Showcase() {
                 <div className="flex items-start gap-2.5">
                   <FileCheck2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
                   <p>
-                    Findings are reviewed by the clinician before a report is exported. The
-                    platform supports—not replaces—professional judgment.
+                    Findings are reviewed by the clinician before a report is exported. The platform
+                    supports—not replaces—professional judgment.
                   </p>
                 </div>
                 <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">

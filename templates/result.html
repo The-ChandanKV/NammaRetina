@@ -134,9 +134,109 @@
   <div>
     <div class="card"><h3>Scan &amp; Grad-CAM</h3>
       <div class="compare">
-        <div><div class="img-frame"><img src="{{ image_url }}" alt="Retinal scan"></div><p class="note">Original</p></div>
-        <div>{% if heatmap_url %}<div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap"></div><p class="note">Regions the AI focused on</p>{% else %}<p class="muted">Grad-CAM unavailable for this scan.</p>{% endif %}</div>
-      </div></div>
+        <div>
+          <div class="img-frame"><img src="{{ image_url }}" alt="Original retinal scan"></div>
+          <p class="note">Original Retinal Image</p>
+        </div>
+        <div>
+          {% if heatmap_url %}
+          <div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap"></div>
+          <p class="note">Regions the AI Focused On</p>
+          {% else %}
+          <p class="muted">Grad-CAM unavailable for this scan.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if heatmap_url %}
+      <div class="gradcam-overlay-block" data-gradcam-overlay>
+        <div class="img-frame gradcam-blend" id="gradcam-blend">
+          <img src="{{ image_url }}" alt="" aria-hidden="true" class="gradcam-base" draggable="false">
+          <img src="{{ heatmap_url }}" alt="" aria-hidden="true" class="gradcam-heat" id="gradcam-heat" draggable="false" style="opacity:0.62">
+          <span class="gradcam-badge">Grad-CAM Overlay</span>
+        </div>
+        <p class="note" style="margin-top:.75rem">Grad-CAM Overlay</p>
+        <p class="note" style="margin-top:.35rem">
+          Explore how a Grad-CAM-style heatmap can be superimposed on retinal imagery to visualize regions influencing an AI assessment.
+        </p>
+        <p class="note" style="margin-top:.35rem;opacity:.85">
+          Illustrative visualization for demonstration purposes. Highlighted regions do not necessarily indicate retinal disease.
+        </p>
+
+        <div class="gradcam-controls">
+          <div class="gradcam-mode" role="group" aria-label="Overlay display mode">
+            <button type="button" class="gradcam-mode-btn" data-gradcam-mode="original" aria-pressed="false">Original</button>
+            <button type="button" class="gradcam-mode-btn is-active" data-gradcam-mode="overlay" aria-pressed="true">Grad-CAM Overlay</button>
+          </div>
+          <div class="gradcam-slider-row">
+            <label for="gradcam-intensity">Heatmap Intensity</label>
+            <span id="gradcam-intensity-value" class="gradcam-intensity-value" aria-live="polite">62%</span>
+          </div>
+          <input
+            id="gradcam-intensity"
+            class="gradcam-slider"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="62"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="62"
+            aria-valuetext="62 percent heatmap intensity">
+          <div class="gradcam-slider-ends">
+            <span>0% · Original</span>
+            <span>100% · Strongest overlay</span>
+          </div>
+        </div>
+      </div>
+      <script>
+      (function () {
+        var root = document.querySelector("[data-gradcam-overlay]");
+        if (!root) return;
+        var heat = document.getElementById("gradcam-heat");
+        var slider = document.getElementById("gradcam-intensity");
+        var valueEl = document.getElementById("gradcam-intensity-value");
+        var buttons = root.querySelectorAll("[data-gradcam-mode]");
+        var mode = "overlay";
+        var intensity = 62;
+
+        function apply() {
+          var opacity = mode === "original" ? 0 : intensity / 100;
+          heat.style.opacity = String(opacity);
+          var shown = Math.round(opacity * 100);
+          valueEl.textContent = shown + "%";
+          slider.value = String(shown);
+          slider.setAttribute("aria-valuenow", String(shown));
+          slider.setAttribute(
+            "aria-valuetext",
+            shown === 0 ? "Original image only" : shown + " percent heatmap intensity"
+          );
+          buttons.forEach(function (btn) {
+            var active = btn.getAttribute("data-gradcam-mode") === mode;
+            btn.classList.toggle("is-active", active);
+            btn.setAttribute("aria-pressed", active ? "true" : "false");
+          });
+        }
+
+        buttons.forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            mode = btn.getAttribute("data-gradcam-mode") || "overlay";
+            apply();
+          });
+        });
+
+        slider.addEventListener("input", function () {
+          intensity = Number(slider.value) || 0;
+          mode = intensity === 0 ? "original" : "overlay";
+          apply();
+        });
+
+        apply();
+      })();
+      </script>
+      {% endif %}
+    </div>
     {% if progression_graph_url %}
     <div class="card"><h3>Progression history</h3>
       <div class="img-frame" style="background:#fff"><img src="{{ progression_graph_url }}" alt="Progression graph"></div></div>

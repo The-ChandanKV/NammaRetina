@@ -72,9 +72,11 @@ def gradcam_reproducibility(map_a: np.ndarray, map_b: np.ndarray) -> dict:
     b = np.asarray(map_b, dtype=np.float64)
     if a.shape != b.shape:
         raise ValueError("Grad-CAM maps must share shape")
+    if not a.size or not np.isfinite(a).all() or not np.isfinite(b).all():
+        raise ValueError("Grad-CAM maps must be nonempty and finite")
     a = (a - a.min()) / (a.max() - a.min() + 1e-8)
     b = (b - b.min()) / (b.max() - b.min() + 1e-8)
-    corr = float(np.corrcoef(a.ravel(), b.ravel())[0, 1])
+    corr = float(np.corrcoef(a.ravel(), b.ravel())[0, 1]) if a.std() > 0 and b.std() > 0 else None
     mae = float(np.mean(np.abs(a - b)))
     return {
         "pearson_r": corr,
@@ -101,7 +103,9 @@ def deletion_auc(
     """
     image = np.asarray(image_rgb_uint8, dtype=np.float32)
     importance = np.asarray(importance_map, dtype=np.float64)
-    if importance.shape[:2] != image.shape[:2]:
+    if not isinstance(steps, int) or steps < 1:
+        raise ValueError("steps must be a positive integer")
+    if importance.ndim != 2 or importance.shape != image.shape[:2]:
         raise ValueError("importance map must match image spatial size")
     flat_order = np.argsort(-importance.ravel())
     n = flat_order.size
@@ -120,7 +124,7 @@ def deletion_auc(
         working[ys, xs] = hide_value
     # Normalize deletion curve area (lower is more faithful under deletion).
     xs = np.linspace(0.0, 1.0, len(probs))
-    auc = float(np.trapz(probs, xs))
+    auc = float(np.sum((np.asarray(probs[:-1]) + probs[1:]) * np.diff(xs) / 2))
     return {
         "deletion_auc": auc,
         "curve": probs,

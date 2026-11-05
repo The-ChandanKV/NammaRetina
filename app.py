@@ -15,6 +15,7 @@ import json
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
+from urllib.parse import urlsplit, unquote
 
 from flask import (
     Flask,
@@ -62,7 +63,7 @@ from database import (
     storage_object_exists,
 )
 from evaluation_reports import ensure_seed_evaluation, latest_evaluation, list_evaluation_runs, load_run
-from gradcam import generate_gradcam
+from gradcam import generate_gradcam, attention_path_for_heatmap
 from lime_explainer import explain_with_loaded_model, load_lime_artifact, save_lime_artifact
 from llm_agent import explain_report
 from model_loader import load_model, predict_severity
@@ -200,7 +201,7 @@ def simulation_filename_for_image(image_path: str | None) -> str | None:
     """Derive the on-disk / storage simulation filename from a report image path."""
     if not image_path:
         return None
-    sim_filename = f"{Path(str(image_path).split('/')[-1]).stem}_simulation.png"
+    sim_filename = f"{Path(str(image_path).split('/')[-1]).stem}_simulation_v2.png"
     # Older uploads used a second timestamp only in their remote object name.
     if len(sim_filename) > 32 and sim_filename[:8].isdigit() and sim_filename[16:24].isdigit():
         sim_filename = sim_filename[16:]
@@ -242,6 +243,30 @@ def ensure_simulation_for_report(report: dict, progression_rows: list | None) ->
         )
         return None
 
+    attention_storage = str(attention_path_for_heatmap(heatmap_path))
+    attention_local = resolve_artifact(attention_storage, HEATMAP_DIR)
+    if not attention_local:
+        try:
+            # Legacy RGB overlays do not contain recoverable scalar attention.
+            # Recompute a genuine map with the loaded classifier before simulating.
+            model = load_model()
+            if model is None:
+                return None
+            regenerated = generate_gradcam(model, image_local, int(report["severity"]), str(HEATMAP_DIR))
+            if not regenerated:
+                return None
+            attention_local = str(attention_path_for_heatmap(regenerated))
+            Path(heatmap_local).write_bytes(Path(regenerated).read_bytes())
+            try:
+                if str(heatmap_path).startswith(BUCKET_HEATMAPS + "/"):
+                    upload_file(heatmap_local, BUCKET_HEATMAPS, str(heatmap_path).split("/", 1)[1])
+                    upload_file(attention_local, BUCKET_HEATMAPS, attention_storage.split("/", 1)[1])
+            except Exception:
+                logger.warning("Recomputed attention could not be persisted", exc_info=True)
+        except Exception:
+            logger.warning("Scalar attention regeneration unavailable", exc_info=True)
+            return None
+
     history = [dict(row) for row in (progression_rows or [])]
     if not history:
         history = [{
@@ -253,7 +278,7 @@ def ensure_simulation_for_report(report: dict, progression_rows: list | None) ->
     try:
         sim_path = simulate_progression(
             image_path=image_local,
-            gradcam_path=heatmap_local,
+            gradcam_path=attention_local,
             progression_history=history,
         )
         try:
@@ -275,7 +300,15 @@ def db_path_to_url(rel_path: str | None) -> str:
     if not rel_path:
         return url_for("serve_file", subdir="placeholder", filename="none.svg")
     if str(rel_path).split("/", 1)[0] in {BUCKET_IMAGES, BUCKET_HEATMAPS, BUCKET_REPORTS}:
-        return storage_path_to_signed_url(rel_path) or ""
+        signed = storage_path_to_signed_url(rel_path)
+        if signed:
+            return signed
+        # A restored local artifact remains usable during a signing outage.
+        _, remote = str(rel_path).split("/", 1)
+        subdir = remote.split("/", 1)[0]
+        if subdir in {"uploads", "heatmaps", "reports", "simulations"}:
+            return url_for("serve_file", subdir=subdir, filename=Path(remote).name)
+        return ""
     normalised = str(rel_path).replace("\\", "/")
     if normalised.startswith("static/"):
         normalised = normalised[len("static/"):]
@@ -366,15 +399,22 @@ def register():
     return render_template("register.html", first_account=first_account)
 
 
+def _validated_next(value: str, default: str) -> str:
+    """Accept an application path, excluding browser-normalized external URLs."""
+    value = str(value or "")
+    decoded = unquote(value)
+    if not decoded.startswith("/") or decoded.startswith("//") or "\\" in decoded or any(ord(c) < 32 for c in decoded):
+        return default
+    parts = urlsplit(decoded)
+    if parts.scheme or parts.netloc or parts.path.rstrip("/") in {"/login", "/signin", "/auth/callback", "/auth/google", "/logout"}:
+        return default
+    return value
+
+
 def _safe_next_url(default_endpoint: str = "dashboard") -> str:
     """Return a same-origin relative next URL, else the default doctor destination."""
     next_url = request.args.get("next") or request.form.get("next") or ""
-    if next_url.startswith("/") and not next_url.startswith("//"):
-        # Keep auth pages from bouncing signed-in users back into the login shell.
-        if next_url.rstrip("/") in {"/login", "/signin"}:
-            return url_for(default_endpoint)
-        return next_url
-    return url_for(default_endpoint)
+    return _validated_next(next_url, url_for(default_endpoint))
 
 
 def _auth_signin_view():
@@ -388,7 +428,7 @@ def _auth_signin_view():
         user = verify_user(email, password)
         if user is None:
             flash("Invalid email or password.", "danger")
-            return redirect(url_for("signin"))
+            return redirect(url_for("signin", next=_safe_next_url()))
 
         session.clear()
         session["user_id"] = user["user_id"]
@@ -398,7 +438,7 @@ def _auth_signin_view():
         flash(f"Welcome back, {user['username']}!", "success")
         return redirect(_safe_next_url("dashboard"))
 
-    return render_template("login.html")
+    return render_template("login.html", next_url=_safe_next_url())
 
 
 @app.route("/signin", methods=["GET", "POST"])
@@ -424,9 +464,7 @@ def logout():
 @app.route("/auth/google")
 def auth_google():
     """Initiate Google OAuth SSO flow via Supabase."""
-    next_url = request.args.get("next") or ""
-    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
-        session["next_url"] = next_url
+    session["next_url"] = _safe_next_url()
 
     callback_url = url_for("auth_callback", _external=True)
     try:
@@ -452,26 +490,26 @@ def auth_callback():
         return redirect(url_for("signin"))
 
     code = request.args.get("code")
-    access_token = request.args.get("access_token")
+    # PKCE codes are bound to the sign-in initiated in this browser. Never accept
+    # bearer tokens in query strings (they leak into logs/history and bypass PKCE).
+    if request.args.get("access_token"):
+        flash("Please start Google sign-in again to establish a secure session.", "warning")
+        return redirect(url_for("signin"))
 
-    # If neither query param is present, render helper page to parse client hash fragments (#access_token=...)
-    if not code and not access_token:
+    # Missing/obsolete callbacks show a restart link without forwarding tokens.
+    if not code:
         return render_template("auth_callback.html")
 
     user = None
     if code:
         verifier = session.pop("oauth_code_verifier", None)
+        if not verifier:
+            flash("Your sign-in session expired. Please start Google sign-in again.", "warning")
+            return redirect(url_for("signin"))
         try:
             user = exchange_oauth_code(code=code, verifier=verifier)
         except Exception as exc:
             logger.error("Failed to exchange OAuth code: %s", exc)
-            flash(f"Authentication failed: {exc}", "danger")
-            return redirect(url_for("signin"))
-    elif access_token:
-        try:
-            user = get_user_from_access_token(access_token)
-        except Exception as exc:
-            logger.error("Failed to retrieve user from access token: %s", exc)
             flash(f"Authentication failed: {exc}", "danger")
             return redirect(url_for("signin"))
 
@@ -502,9 +540,7 @@ def auth_callback():
     session["email"] = user_record["email"]
 
     flash(f"Welcome, {user_record['username']}! Signed in with Google.", "success")
-    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
-        return redirect(next_url)
-    return redirect(url_for("dashboard"))
+    return redirect(_validated_next(next_url, url_for("dashboard")))
 
 
 @app.route("/privacy")
@@ -630,6 +666,10 @@ def upload():
         # is not enough (a renamed .txt would otherwise crash the pipeline).
         try:
             with Image.open(upload_path) as im:
+                if im.width * im.height > 20_000_000:
+                    upload_path.unlink(missing_ok=True)
+                    flash("This image is too large to analyse. Please resize it to at most 20 megapixels.", "warning")
+                    return redirect(url_for("index"))
                 im.verify()
         except Exception:
             try:
@@ -680,6 +720,12 @@ def upload():
         upload_file(str(upload_path), BUCKET_IMAGES, img_remote)
         if heatmap_path:
             upload_file(heatmap_path, BUCKET_HEATMAPS, heat_remote)
+            attention = attention_path_for_heatmap(heatmap_path)
+            if attention.is_file():
+                try:
+                    upload_file(str(attention), BUCKET_HEATMAPS, f"heatmaps/{attention.name}")
+                except Exception:
+                    logger.warning("Scalar attention persistence unavailable", exc_info=True)
 
         # Store bucket-prefixed paths so we can later generate signed URLs
         image_storage = f"{BUCKET_IMAGES}/{img_remote}"
@@ -719,7 +765,7 @@ def upload():
             try:
                 sim_result = simulate_progression(
                     image_path=str(upload_path),
-                    gradcam_path=heatmap_path,
+                    gradcam_path=str(attention_path_for_heatmap(heatmap_path)),
                     progression_history=[dict(row) for row in history],
                 )
                 simulation_path = sim_result
@@ -892,7 +938,8 @@ def generate_lime(report_id: int):
     report = get_report(report_id)
     if report is None:
         abort(404)
-    if float(report.get("confidence") or 0) <= 0:
+    report = normalize_report(report)
+    if not report["model_used"]:
         flash("No prediction is available to explain for this report.", "warning")
         return redirect(url_for("result", report_id=report_id))
     abs_image = resolve_artifact(report["image_path"], UPLOAD_DIR)
@@ -1262,14 +1309,16 @@ def serve_file(subdir: str, filename: str):
         if signed:
             return flask_redirect(signed)
 
-    # Local fallback (progression graphs, simulations still on disk)
+    # Only search the requested artifact category, never every private directory.
+    directories = {
+        "uploads": [UPLOAD_DIR, BASE_DIR / "uploads"],
+        "heatmaps": [HEATMAP_DIR, BASE_DIR / "heatmaps"],
+        "reports": [REPORT_DIR, BASE_DIR / "reports"],
+        "simulations": [SIMULATION_DIR],
+        "placeholder": [],
+    }
     for search_dir in [
-        Path(config.STATIC_DIR) / subdir,
-        Path(config.BASE_DIR) / subdir,
-        Path(config.UPLOAD_DIR),
-        Path(config.HEATMAP_DIR),
-        Path(config.REPORT_DIR),
-        Path(config.BASE_DIR) / "reports",
+        *directories[subdir],
     ]:
         p = Path(search_dir) / safe_filename
         if p.exists() and p.is_file():

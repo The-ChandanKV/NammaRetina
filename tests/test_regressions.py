@@ -168,6 +168,7 @@ class RegressionTests(unittest.TestCase):
         self.patch(web, "get_or_create_sso_user", return_value={"user_id": "u", "username": "Doctor", "role": "doctor", "email": "u@example.com"})
         with self.client.session_transaction() as session:
             session["next_url"] = "/dashboard"
+            session["oauth_code_verifier"] = "test-verifier"
         self.assertEqual(self.client.get("/auth/callback?code=test").location, "/dashboard")
 
     def test_oauth_uses_separate_client(self):
@@ -175,6 +176,85 @@ class RegressionTests(unittest.TestCase):
         self.patch(database, "_auth_client", return_value=auth_client)
         database.exchange_oauth_code("test-code", "test-verifier")
         auth_client.auth.exchange_code_for_session.assert_called_once_with({"auth_code": "test-code", "code_verifier": "test-verifier"})
+
+    def test_login_preserves_report_destination_for_google_and_password(self):
+        response = self.client.get("/signin?next=/result/7")
+        self.assertIn(b'name="next" value="/result/7"', response.data)
+        self.assertIn(b'/auth/google?next=/result/7', response.data)
+        self.patch(web, "verify_user", return_value=None)
+        response = self.client.post("/signin", data={"csrf_token": "invalid"})
+        # Invalid CSRF is rejected rather than silently losing the requested page.
+        self.assertEqual(response.status_code, 400)
+        with self.client.session_transaction() as session: token = session["csrf_token"]
+        response = self.client.post("/signin", data={"csrf_token": token, "next": "/result/7"})
+        self.assertIn("next=/result/7", response.location)
+
+    def test_oauth_rejects_bearer_urls_and_codes_without_browser_verifier(self):
+        exchange = self.patch(web, "exchange_oauth_code")
+        lookup = self.patch(web, "get_user_from_access_token")
+        for path in ["/auth/callback?access_token=untrusted", "/auth/callback?code=unbound"]:
+            self.assertEqual(self.client.get(path).location, "/signin")
+        exchange.assert_not_called()
+        lookup.assert_not_called()
+
+    def test_signin_destination_rejects_external_and_auth_urls(self):
+        self.login()
+        for target in ["//external.example", "/\\external.example", "/%2fexternal.example", "/signin?next=/dashboard", "/auth/google"]:
+            response = self.client.get("/signin", query_string={"next": target})
+            self.assertEqual(response.location, "/dashboard")
+
+    def test_local_media_survives_signing_outage_and_stays_in_category(self):
+        self.login()
+        self.patch(web, "storage_path_to_signed_url", return_value=None)
+        self.patch(web, "get_signed_url", return_value=None)
+        path = web.UPLOAD_DIR / "restored.png"
+        Image.new("RGB", (8, 8), "red").save(path)
+        with web.app.test_request_context():
+            url = web.db_path_to_url("retinal-images/uploads/restored.png")
+        self.assertEqual(url, "/files/uploads/restored.png")
+        with self.client.get(url) as response:
+            self.assertEqual(response.data, path.read_bytes())
+        # Another category must never resolve a file from the uploads directory.
+        self.assertIn(b"<svg", self.client.get("/files/heatmaps/restored.png").data)
+
+    def test_legacy_simulation_regenerates_real_scalar_attention(self):
+        self.report["heatmap_path"] = "heatmaps/heatmaps/scan_gradcam.png"
+        image = web.UPLOAD_DIR / "scan.png"
+        heat = web.HEATMAP_DIR / "scan_gradcam.png"
+        Image.new("RGB", (80, 80), "red").save(image)
+        Image.new("RGB", (80, 80), "blue").save(heat)
+        self.patch(web.config, "SIMULATION_DIR", str(web.SIMULATION_DIR))
+        self.patch(web, "get_signed_url", return_value=None)
+        self.patch(web, "resolve_artifact", side_effect=lambda path, directory: str(image) if str(path) == self.report["image_path"] else str(heat) if str(path) == self.report["heatmap_path"] else None)
+        self.patch(web, "load_model", return_value=object())
+        def regenerate(*args):
+            Image.new("L", (80, 80), 200).save(web.attention_path_for_heatmap(heat))
+            return str(heat)
+        regenerate = self.patch(web, "generate_gradcam", side_effect=regenerate)
+        self.patch(web, "upload_file")
+        with web.app.test_request_context():
+            url = web.ensure_simulation_for_report(self.report, [{"status": "Initial"}])
+        self.assertIn("scan_simulation_v2.png", url)
+        self.assertTrue((web.SIMULATION_DIR / "scan_simulation_v2.png").is_file())
+        regenerate.assert_called_once()
+        (web.SIMULATION_DIR / "scan_simulation_v2.png").unlink()
+        regenerate.side_effect = RuntimeError("Attention computation unavailable")
+        with web.app.test_request_context():
+            self.assertIsNone(web.ensure_simulation_for_report(self.report, [{"status": "Initial"}]))
+
+    def test_oversized_decoded_image_is_rejected_before_inference(self):
+        self.login()
+        predict = self.patch(web, "predict_severity")
+        header = Mock(width=8000, height=8000)
+        context = Mock()
+        context.__enter__ = Mock(return_value=header)
+        context.__exit__ = Mock(return_value=False)
+        form = self.form()
+        with patch.object(web.Image, "open", return_value=context):
+            response = self.client.post("/upload", data=form)
+        self.assertEqual(response.location, "/scan")
+        predict.assert_not_called()
+        header.verify.assert_not_called()
 
     def test_administrator_keeps_session_when_creating_account(self):
         self.login("admin")
@@ -245,7 +325,7 @@ class RegressionTests(unittest.TestCase):
         self.login()
         self.patch(web, "get_report", return_value=self.report)
         def download(storage, destination):
-            self.assertEqual(storage, "reports/pdfs/report_7_v2.pdf")
+            self.assertEqual(storage, "reports/pdfs/report_7_v3.pdf")
             Path(destination).write_bytes(b"%PDF-offline-test")
             return str(destination)
         self.patch(web, "download_storage_file", side_effect=download)
@@ -276,7 +356,7 @@ class RegressionTests(unittest.TestCase):
         upload = self.patch(web, "upload_file")
         response = self.client.post("/report/7/regenerate", data={"csrf_token": "test-csrf"})
         self.assertEqual(response.location, "/result/7")
-        upload.assert_called_once_with(pdf, "reports", "pdfs/report_7_v2.pdf")
+        upload.assert_called_once_with(pdf, "reports", "pdfs/report_7_v3.pdf")
 
     def test_missing_pdf_is_rebuilt_on_download(self):
         self.login()
@@ -292,7 +372,7 @@ class RegressionTests(unittest.TestCase):
         response = self.client.get("/download/7")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b"%PDF-rebuilt")
-        upload.assert_called_once_with(str(pdf), "reports", "pdfs/report_7_v2.pdf")
+        upload.assert_called_once_with(str(pdf), "reports", "pdfs/report_7_v3.pdf")
         response.close()
 
     def test_legacy_placeholder_pdf_and_xai_are_blocked(self):
@@ -528,7 +608,7 @@ class RegressionTests(unittest.TestCase):
 
     def test_descending_progression_and_ties(self):
         query = Mock()
-        for method in ("select", "eq", "order"):
+        for method in ("select", "eq", "order", "range"):
             getattr(query, method).return_value = query
         query.execute.return_value.data = []
         sb = SimpleNamespace(table=lambda _: query)

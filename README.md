@@ -121,7 +121,7 @@ When you upload a retinal image through the web interface, the following pipelin
 
 - Source: `landing-source/` (React + Vite + Tailwind)
 - Build output: `static/landing/` (committed or produced in Docker)
-- Doctor Sign In uses a real `<a href="/login">` so Flask handles authentication
+- Doctor Sign In uses a real `<a href="/signin">` so Flask handles authentication
 - `/static/uploads|heatmaps|reports|simulations` remain blocked; only `/static/css/*` and `/landing/*` are public
 
 ---
@@ -231,7 +231,7 @@ later reports on the same day, and ignore records without a valid prediction. Pa
 and directory status use the same report-derived history instead of a potentially stale
 Progression row. Stored AI prose is supplementary; the main interpretation uses recorded fields.
 
-PDF format v2 uses `report_<id>_v2.pdf` locally and `reports/pdfs/report_<id>_v2.pdf` in Storage.
+PDF format v3 uses `report_<id>_v3.pdf` locally and `reports/pdfs/report_<id>_v3.pdf` in Storage.
 Opening Export PDF automatically builds this format if it is missing; old PDFs do not need a
 database migration. Regenerate PDF explicitly rebuilds it. Text is escaped and wrapped, images
 preserve their aspect ratio, and complete files replace the cache atomically. Optional AI-text,
@@ -310,3 +310,21 @@ quarantine changes evaluation membership.
 See [measured results](training/results/cpu_metrics.json),
 [the GPU notebook](training/Train_NammaRetina_GPU.ipynb), and
 [the model promotion steps](training/README.md#render-production-steps).
+
+
+## Project audit fixes (5 November 2026)
+
+- Database list/history queries page through results instead of silently accepting Supabase's row limit. Storage existence checks search and page for the requested filename.
+- Restored images remain usable when Storage URL signing is unavailable. Local file serving stays within the requested artifact category.
+- Sign-in destinations survive password errors and Google sign-in. OAuth callbacks require a browser-bound PKCE verifier; obsolete bearer tokens in URLs are rejected. Google account provisioning policy is unchanged.
+- Grad-CAM scalar maps are projected back through the exact inference crop into original-image coordinates. The RGB overlay and a separate grayscale `*_gradcam_attention.png` are persisted. Shared preprocessing produces the same classifier pixels as before.
+- Illustrative simulations use genuine scalar attention, reject RGB overlays and empty maps, and use versioned `*_simulation_v2.png` caches. Legacy attention is recomputed when possible; no synthetic central hotspot is substituted. These overlays remain illustrative, not forecasts.
+- Model initialization is serialized across worker threads. Temporary load/download failures can recover after a 30-second backoff. Images exceeding 20 megapixels are rejected before inference to bound decoding memory.
+- Supplementary fallback text describes predicted grades rather than claiming detected lesions or biological recovery. Remote text providers have explicit timeouts.
+- Patient-cluster bootstrap repeats all observations for each sampled patient, including repeated draws. Undefined statistics remain null. Evaluation input validation rejects empty/noninteger labels and invalid prediction archives; NPZ files cannot unpickle Python objects.
+- Evaluation run paths are sanitized and unique. Metrics publish atomically after the other artifacts, and the dashboard skips corrupt newer runs. Legacy imports retain their actual split and leave missing metrics unavailable.
+- Constant-map diagnostics handle undefined correlation, deletion AUC works across supported NumPy versions, and invalid LIME parameters/cache metadata are rejected.
+- The patient-entry CLI uses the current Supabase helpers. Legacy SQLite/simulation test entry points now run the current isolated tests rather than writing demo data or asserting obsolete simulation behavior.
+- Frontend tests exercise the actual Flask SPA, with working lint and type checks. Patched development dependencies are locked, including a minimatch override for the known glob-expansion advisory. The build includes type checking.
+
+Audit checks use synthetic records and mocked services; the saved classifier is also smoke-tested with a synthetic image. They do not constitute a manual review of every live patient record or a new clinical accuracy evaluation. Existing experiment result files and model weights are preserved.

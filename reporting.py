@@ -12,7 +12,7 @@ from config import DR_CLASSES
 from progression_analysis import analyse_longitudinal_progression
 from treatment import get_treatment_recommendation
 
-REPORT_FORMAT_VERSION = 2
+REPORT_FORMAT_VERSION = 3
 REPORT_SECTIONS = (
     ("patient", "Patient information"),
     ("screening", "Screening result"),

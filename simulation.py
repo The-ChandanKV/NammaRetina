@@ -50,11 +50,14 @@ def _retinal_fov_mask(rgb: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
     threshold = max(8.0, float(np.percentile(luminance, 5)) * 0.6)
     mask = (luminance > threshold).astype(np.float32)
-    # Soft circular prior centered on the image to suppress corner bleed.
+    # Center the prior on the same fundus crop as inference, including scans
+    # with asymmetric black borders.
+    from retinal_preprocessing import retina_bounds
+    x, y, crop_w, crop_h = retina_bounds(np.clip(rgb, 0, 255).astype(np.uint8))
     h, w = luminance.shape
     yy, xx = np.mgrid[0:h, 0:w]
-    cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
-    radius = 0.48 * min(h, w)
+    cy, cx = y + (crop_h - 1) / 2.0, x + (crop_w - 1) / 2.0
+    radius = 0.48 * min(crop_h, crop_w)
     circle = ((yy - cy) ** 2 + (xx - cx) ** 2) <= (radius ** 2)
     mask = mask * circle.astype(np.float32)
     mask_img = Image.fromarray(np.uint8(np.clip(mask * 255.0, 0, 255)))
@@ -85,8 +88,12 @@ def simulate_progression(
     if not progression_history:
         raise ValueError("Progression history is empty; cannot build illustrative overlay.")
 
-    original = Image.open(image_file).convert("RGB")
-    heatmap = Image.open(heatmap_file).convert("L")
+    with Image.open(image_file) as source:
+        original = source.convert("RGB")
+    with Image.open(heatmap_file) as source:
+        if source.mode != "L":
+            raise ValueError("Simulation requires genuine scalar Grad-CAM attention, not an RGB overlay")
+        heatmap = source.copy()
 
     width, height = original.size
     heatmap = heatmap.resize((width, height), Image.Resampling.BILINEAR)
@@ -95,13 +102,9 @@ def simulate_progression(
     fov = _retinal_fov_mask(base * 255.0)
 
     heatmap_array = np.asarray(heatmap, dtype=np.float32) / 255.0
-    # Prefer warm Grad-CAM cores; fall back to FOV-weighted midfield if empty.
-    mask = np.clip((heatmap_array - 0.22) / 0.78, 0.0, 1.0) * fov
-    if float(mask.max()) < 0.05:
-        yy, xx = np.mgrid[0:height, 0:width]
-        cy, cx = height / 2.0, width / 2.0
-        dist = np.sqrt((yy - cy) ** 2 + (xx - cx) ** 2)
-        mask = np.clip(1.0 - dist / (0.42 * max(width, height)), 0.0, 1.0) * fov
+    mask = heatmap_array * fov
+    if float(mask.max()) <= 0:
+        raise ValueError("No model attention is available inside the retinal field of view")
 
     last_status = progression_history[-1].get("status") if progression_history else "Initial"
     spread_factor = _status_spread_factor(str(last_status or "Initial"))
@@ -148,7 +151,7 @@ def simulate_progression(
 
     output_dir = Path(config.SIMULATION_DIR)
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{image_file.stem}_simulation.png"
+    output_path = output_dir / f"{image_file.stem}_simulation_v2.png"
     result_image.save(output_path)
     return str(output_path)
 

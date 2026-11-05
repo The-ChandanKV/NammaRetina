@@ -17,6 +17,23 @@ from config import GRADCAM_LAYER_NAME, GRADCAM_COLORMAP, IMG_SIZE
 logger = logging.getLogger(__name__)
 
 
+def attention_path_for_heatmap(path):
+    path = Path(path)
+    return path.with_name(path.stem + "_attention.png")
+
+
+def project_attention(heatmap, original):
+    """Undo the classifier crop/resize so attention and original pixels align."""
+    from retinal_preprocessing import retina_bounds
+    heatmap = np.asarray(heatmap, dtype=np.float32)
+    if heatmap.ndim != 2 or not heatmap.size or not np.isfinite(heatmap).all():
+        raise ValueError("Grad-CAM returned an invalid scalar map")
+    x, y, width, height = retina_bounds(original)
+    attention = np.zeros(original.shape[:2], dtype=np.float32)
+    attention[y:y + height, x:x + width] = cv2.resize(np.clip(heatmap, 0, 1), (width, height))
+    return attention
+
+
 def _apply_colormap(heatmap_gray: np.ndarray, colormap: str = "jet") -> np.ndarray:
     """Convert a single-channel float32 heatmap [0,1] to a BGR colour-mapped image."""
     cmap_lookup = {
@@ -73,8 +90,6 @@ def generate_gradcam(
     if original is None:
         raise FileNotFoundError(f"Cannot read image: {image_path}")
 
-    original_resized = cv2.resize(original, (IMG_SIZE, IMG_SIZE))
-
     if model is not None:
         try:
             heatmap = _compute_gradcam(model, image_path, predicted_class, layer_name)
@@ -85,14 +100,14 @@ def generate_gradcam(
         logger.info("No model available — Grad-CAM is unavailable.")
         return None
 
-    # Resize heatmap to match the original image
-    heatmap = cv2.resize(heatmap, (original_resized.shape[1], original_resized.shape[0]))
-
-    # Apply colour map and blend with original
+    heatmap = project_attention(heatmap, original)
     coloured_heatmap = _apply_colormap(heatmap, GRADCAM_COLORMAP)
-    overlay = cv2.addWeighted(original_resized, 0.6, coloured_heatmap, 0.4, 0)
-
-    cv2.imwrite(str(output_path), overlay)
+    alpha = .4 * heatmap[..., None]
+    overlay = np.clip(original * (1 - alpha) + coloured_heatmap * alpha, 0, 255).astype(np.uint8)
+    if not cv2.imwrite(str(attention_path_for_heatmap(output_path)), np.uint8(heatmap * 255)):
+        raise OSError("Could not save scalar Grad-CAM attention")
+    if not cv2.imwrite(str(output_path), overlay):
+        raise OSError("Could not save Grad-CAM overlay")
     logger.info("Heatmap saved to %s", output_path)
     return str(output_path)
 

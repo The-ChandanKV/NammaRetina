@@ -1,25 +1,13 @@
-{% extends "base.html" %}
-{% block title %}Authenticating...{% endblock %}
+{% extends "base_auth.html" %}
+{% block title %}Sign-in session expired{% endblock %}
 {% block content %}
-<div class="auth-wrap">
-  <div class="card auth-card" style="text-align: center; padding: 2.5rem 1.5rem;">
-    <div class="eye" style="margin: 0 auto 1.5rem auto;"></div>
-    <h2>Signing in with Google...</h2>
-    <p class="muted">Please wait a moment while we verify your account.</p>
-  </div>
-</div>
+<div class="auth-wrap"><div class="card auth-card">
+  <h1>Start sign-in again</h1>
+  <p class="muted">The sign-in response did not contain a valid authorization code. Return to sign-in to create a secure session.</p>
+  <a class="btn btn-primary" href="{{ url_for('signin') }}">Return to sign-in</a>
+</div></div>
 <script>
-  // Supabase may return tokens in the hash fragment (#access_token=...&refresh_token=...)
-  if (window.location.hash && window.location.hash.includes('access_token')) {
-    const hash = window.location.hash.substring(1);
-    window.location.replace("{{ url_for('auth_callback') }}?" + hash);
-  } else if (window.location.hash && window.location.hash.includes('error')) {
-    const hash = window.location.hash.substring(1);
-    window.location.replace("{{ url_for('auth_callback') }}?" + hash);
-  } else {
-    setTimeout(function() {
-      window.location.replace("{{ url_for('signin') }}");
-    }, 2500);
-  }
+// Remove obsolete token fragments without copying secrets into URLs or requests.
+if (window.location.hash) window.history.replaceState(null, '', window.location.pathname);
 </script>
 {% endblock %}

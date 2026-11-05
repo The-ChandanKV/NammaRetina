@@ -47,9 +47,9 @@ async function buildHeatOnlyCanvas(
   const { data } = image;
 
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
+    const r = data[i] ?? 0;
+    const g = data[i + 1] ?? 0;
+    const b = data[i + 2] ?? 0;
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     const sat = max === 0 ? 0 : (max - min) / max;

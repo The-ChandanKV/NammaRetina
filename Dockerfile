@@ -2,7 +2,7 @@
 FROM node:22-bookworm-slim AS landing
 WORKDIR /app/landing-source
 COPY landing-source/package.json landing-source/package-lock.json* ./
-RUN npm install
+RUN npm ci
 COPY landing-source/ ./
 RUN npm run build
 

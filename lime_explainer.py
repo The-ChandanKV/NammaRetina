@@ -90,6 +90,8 @@ def explain_image_lime(
     hide_color:
         Baseline fill for masked superpixels (default: image mean).
     """
+    if n_samples < 2 or n_segments < 2 or batch_size < 1 or top_k < 1:
+        raise ValueError("LIME requires at least two samples/segments and a positive batch size/top_k")
     started = time.perf_counter()
     rgb = _prepare_display_image(image_path, image_size)
     labels = _slic_superpixels(rgb, n_segments=n_segments)
@@ -130,6 +132,8 @@ def explain_image_lime(
             raise ValueError("predict_fn returned an unexpected shape")
         if target_class < 0 or target_class >= preds.shape[1]:
             raise ValueError("target_class out of range for model outputs")
+        if not np.isfinite(preds).all() or np.any(preds < 0) or np.any(preds > 1) or not np.allclose(preds.sum(axis=1), 1, atol=.01):
+            raise ValueError("predict_fn returned invalid probabilities")
         probabilities[start:end] = preds[:, target_class]
 
     # Proximity kernel in binary presence space (cosine / Hamming affinity).
@@ -261,6 +265,8 @@ def load_lime_artifact(output_dir: str | Path, report_id: int) -> Optional[dict]
     try:
         data = json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("method") != "lime_superpixel_ridge":
         return None
     data["overlay_path"] = str(overlay_path)
     return data

@@ -53,6 +53,18 @@ def _get_sb() -> Client:
     return _sb
 
 
+def _fetch_all(query, page_size=500) -> list[dict]:
+    """Read ordered query pages instead of silently accepting the API row cap."""
+    rows = []
+    offset = 0
+    while True:
+        page = query.range(offset, offset + page_size - 1).execute().data or []
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        offset += len(page)
+
+
 def _next_id(table: str, id_col: str) -> int:
     """Return max(id)+1. Used when Postgres sequences are out of sync after migration."""
     sb = _get_sb()
@@ -202,27 +214,26 @@ def get_reports_for_patient(patient_id: int, db_path=None) -> list[dict]:
     """Get all reports for the patient in chronological order."""
     _reject_local_db(db_path)
     sb = _get_sb()
-    result = (
+    query = (
         sb.table("reports")
         .select("*")
         .eq("patient_id", patient_id)
         .order("date", desc=False)
         .order("report_id", desc=False)
-        .execute()
     )
-    return result.data or []
+    return _fetch_all(query)
 
 
 def get_all_patients_with_reports() -> list[dict]:
     """Fetch all patients, newest first."""
     sb = _get_sb()
-    return sb.table("patients").select("*").order("patient_id", desc=True).execute().data or []
+    return _fetch_all(sb.table("patients").select("*").order("patient_id", desc=True))
 
 
 def get_all_reports() -> list[dict]:
     """Fetch all reports, newest first."""
     sb = _get_sb()
-    return sb.table("reports").select("*").order("report_id", desc=True).execute().data or []
+    return _fetch_all(sb.table("reports").select("*").order("report_id", desc=True))
 
 
 # ── Progression ───────────────────────────────────────────────────────────────
@@ -258,15 +269,14 @@ def get_progression_history(patient_id: int, db_path=None) -> list[dict]:
     """Get the progression history for a patient, oldest first."""
     _reject_local_db(db_path)
     sb = _get_sb()
-    result = (
+    query = (
         sb.table("progression")
         .select("*")
         .eq("patient_id", patient_id)
         .order("date", desc=False)
         .order("progression_id", desc=False)
-        .execute()
     )
-    return result.data or []
+    return _fetch_all(query)
 
 
 # ── User authentication ───────────────────────────────────────────────────────
@@ -276,7 +286,9 @@ def count_users(db_path=None) -> int:
     _reject_local_db(db_path)
     sb = _get_sb()
     result = sb.table("user_roles").select("id", count="exact").execute()
-    return result.count or 0
+    if result.count is None:
+        raise DatabaseUnavailable("Could not verify the account count.")
+    return result.count
 
 
 def create_user(username: str, password: str, email: str, role: str = "doctor", db_path=None) -> str:
@@ -645,8 +657,15 @@ def storage_object_exists(storage_path: str) -> bool:
         return False
     folder, _, name = remote.rpartition("/")
     try:
-        items = _get_sb().storage.from_(bucket).list(folder or "") or []
-        return any(item.get("name") == name for item in items)
+        storage = _get_sb().storage.from_(bucket)
+        offset = 0
+        while True:
+            items = storage.list(folder or "", {"search": name, "limit": 100, "offset": offset}) or []
+            if any(item.get("name") == name for item in items):
+                return True
+            if len(items) < 100:
+                return False
+            offset += len(items)
     except Exception as exc:
         logger.warning("Storage existence check failed for %s: %s", storage_path, exc)
         return False
@@ -703,33 +722,31 @@ class _SupabasePseudoConn:
         # SELECT * FROM PROGRESSION WHERE PATIENT_ID = ? ORDER BY DATE ASC
         if "FROM PROGRESSION WHERE PATIENT_ID" in sql_clean:
             patient_id = params[0]
-            result = (
+            query = (
                 self._sb.table("progression")
                 .select("*")
                 .eq("patient_id", patient_id)
                 .order("date", desc="ORDER BY DATE DESC" in sql_clean)
                 .order("progression_id", desc="ORDER BY DATE DESC" in sql_clean)
-                .execute()
             )
-            return _FakeResult(result.data or [])
+            return _FakeResult(_fetch_all(query))
 
         # SELECT * FROM PATIENTS ORDER BY PATIENT_ID DESC
         if "FROM PATIENTS ORDER BY PATIENT_ID DESC" in sql_clean:
-            result = self._sb.table("patients").select("*").order("patient_id", desc=True).execute()
-            return _FakeResult(result.data or [])
+            query = self._sb.table("patients").select("*").order("patient_id", desc=True)
+            return _FakeResult(_fetch_all(query))
 
         # SELECT * FROM REPORTS WHERE PATIENT_ID = ? ORDER BY DATE DESC
         if "FROM REPORTS WHERE PATIENT_ID" in sql_clean and "ORDER BY DATE DESC" in sql_clean:
             patient_id = params[0]
-            result = (
+            query = (
                 self._sb.table("reports")
                 .select("*")
                 .eq("patient_id", patient_id)
                 .order("date", desc=True)
                 .order("report_id", desc=True)
-                .execute()
             )
-            return _FakeResult(result.data or [])
+            return _FakeResult(_fetch_all(query))
 
         raise NotImplementedError("Unsupported query in Supabase compatibility adapter")
 

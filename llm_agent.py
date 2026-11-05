@@ -30,7 +30,11 @@ _SYSTEM_PROMPT = (
     "2. The confidence level of the analysis.\n"
     "3. How the condition has changed compared to previous scans.\n"
     "4. A clear recommendation (e.g. see a specialist, routine follow-up).\n"
-    "Do NOT use bullet points. Write in a warm, professional tone."
+    "Use only the supplied grade, score and recorded comparison. Do not claim "
+    "specific lesions, image quality, biological recovery, treatment success, or "
+    "future risk. The model is a classifier, not a lesion detector. Confidence is "
+    "not diagnostic certainty. A grade change does not prove biological progression. "
+    "State that clinical review is required. Do NOT use bullet points or HTML."
 )
 
 
@@ -55,6 +59,7 @@ def _call_gemini(user_prompt: str) -> str:
     model = genai.GenerativeModel(os.getenv("LLM_MODEL", "gemini-1.5-flash"))
     response = model.generate_content(
         f"{_SYSTEM_PROMPT}\n\n{user_prompt}",
+        request_options={"timeout": 20},
         generation_config=genai.GenerationConfig(
             max_output_tokens=300,
             temperature=0.4,
@@ -67,7 +72,7 @@ def _call_openai(user_prompt: str) -> str:
     """Call OpenAI Chat Completions API."""
     from openai import OpenAI
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""), timeout=20, max_retries=0)
     response = client.chat.completions.create(
         model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
         messages=[
@@ -84,7 +89,7 @@ def _call_huggingface(user_prompt: str) -> str:
     """Call HuggingFace Inference API."""
     from huggingface_hub import InferenceClient
 
-    client = InferenceClient(token=os.getenv("HUGGINGFACE_API_KEY", ""))
+    client = InferenceClient(token=os.getenv("HUGGINGFACE_API_KEY", ""), timeout=20)
     response = client.text_generation(
         prompt=f"{_SYSTEM_PROMPT}\n\n{user_prompt}\n\nExplanation:",
         model=os.getenv("HF_MODEL", "mistralai/Mistral-7B-Instruct-v0.2"),
@@ -96,64 +101,26 @@ def _call_huggingface(user_prompt: str) -> str:
 
 def _fallback_explanation(severity: int, confidence: float, progression_status: str) -> str:
     """Rule-based fallback when no LLM API key is available."""
-    severity_label = DR_CLASSES.get(severity, "Unknown")
-    confidence_pct = round(confidence * 100, 1) if confidence <= 1.0 else round(confidence, 1)
+    from reporting import normalize_report
+    from treatment import get_treatment_recommendation
 
-    # Severity-specific descriptions
-    descriptions = {
-        0: (
-            "The retinal scan appears normal with no signs of diabetic retinopathy. "
-            "The blood vessels and retinal structures look healthy."
-        ),
-        1: (
-            "The retinal scan shows mild diabetic retinopathy with minor changes "
-            "in the blood vessels, such as small micro-aneurysms."
-        ),
-        2: (
-            "The retinal scan shows moderate diabetic retinopathy with visible "
-            "abnormalities in the blood vessels, including dot and blot haemorrhages."
-        ),
-        3: (
-            "The retinal scan shows severe diabetic retinopathy with significant "
-            "vascular damage and a high risk of progression to vision-threatening stages."
-        ),
-        4: (
-            "The retinal scan shows proliferative diabetic retinopathy, the most "
-            "advanced stage, with abnormal new blood vessel growth that poses an "
-            "immediate risk to vision."
-        ),
-    }
-
-    description = descriptions.get(severity, "The retinal scan has been analysed.")
-
-    # Progression context
-    progression_phrases = {
-        "Initial": "This is the first scan on record, so no comparison with previous visits is available.",
-        "Stable": "Compared with previous scans, the condition appears stable with no significant change.",
-        "Worsened": "Compared with previous scans, the condition has worsened, indicating disease progression.",
-        "Improved": "Compared with previous scans, the condition has improved, which is an encouraging sign.",
-    }
-    progression_text = progression_phrases.get(
-        progression_status,
-        f"The current progression status is: {progression_status}.",
+    report = normalize_report({"severity": severity, "confidence": confidence})
+    if not report["model_used"]:
+        return "No valid model prediction is available for this examination. A new analysis is required."
+    descriptions = (
+        f"The model classified this examination as {report['severity_label']} "
+        f"(grade {report['severity']}/4), with a recorded confidence of {report['confidence_pct']:.1f}%. "
+        "This is a screening prediction, not a confirmed diagnosis; confidence is not diagnostic certainty."
     )
-
-    # Recommendations
-    recommendations = {
-        0: "A routine follow-up screening in 12 months is recommended.",
-        1: "Monitoring blood sugar levels closely and a follow-up visit in 6-9 months is recommended.",
-        2: "A consultation with an ophthalmologist is recommended for closer monitoring.",
-        3: "Immediate consultation with a retinal specialist is strongly recommended to prevent vision loss.",
-        4: "Urgent retinal treatment is required. Please seek immediate specialist intervention.",
-    }
-    recommendation = recommendations.get(severity, "Please consult your ophthalmologist.")
-
-    return (
-        f"{description} "
-        f"The analysis confidence is {confidence_pct}%. "
-        f"{progression_text} "
-        f"{recommendation}"
-    )
+    progression_text = {
+        "Initial": "No prior valid examination is available for comparison.",
+        "Stable": "The recorded grade is unchanged from the previous examination.",
+        "Worsened": "The recorded grade increased from the previous examination.",
+        "Improved": "The recorded grade decreased from the previous examination.",
+    }.get(progression_status, "No valid comparison is available.")
+    return (f"{descriptions} {progression_text} "
+            "A change in predicted grade does not prove biological progression or recovery. "
+            f"{get_treatment_recommendation(report['severity'])}. A qualified clinician must review the result.")
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -182,6 +149,11 @@ def explain_report(
     str
         A short, plain-language explanation.
     """
+    from reporting import normalize_report
+    report = normalize_report({"severity": severity, "confidence": confidence})
+    if not report["model_used"]:
+        return _fallback_explanation(severity, confidence, progression_status)
+    severity, confidence = report["severity"], report["confidence"]
     user_prompt = _build_user_prompt(severity, confidence, progression_status)
 
     # Try providers in priority order

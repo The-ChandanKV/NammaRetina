@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -34,11 +36,11 @@ DEFAULT_OUTPUT_ROOT = Path(__file__).resolve().parent / "evaluation_runs"
 
 def _as_probs(probabilities: np.ndarray) -> np.ndarray:
     probabilities = np.asarray(probabilities, dtype=np.float64)
-    if probabilities.ndim != 2 or probabilities.shape[1] != 5:
+    if probabilities.ndim != 2 or probabilities.shape[1] != 5 or not len(probabilities):
         raise ValueError("probabilities must have shape (n, 5)")
     if not np.all(np.isfinite(probabilities)):
         raise ValueError("probabilities contain non-finite values")
-    if np.any(probabilities < -1e-6) or np.any(probabilities > 1 + 1e-6):
+    if np.any(probabilities < 0) or np.any(probabilities > 1):
         raise ValueError("probabilities must be in [0, 1]")
     row_sums = probabilities.sum(axis=1)
     if not np.allclose(row_sums, 1.0, atol=0.02):
@@ -53,27 +55,37 @@ def bootstrap_ci(
     n_boot: int = 2000,
     seed: int = 42,
     patient_ids: Optional[np.ndarray] = None,
-) -> list[float]:
+) -> Optional[list[float]]:
     """95% CI via bootstrap; patient-level when patient_ids are provided."""
     values = np.asarray(values)
+    if not len(values) or n_boot < 1:
+        raise ValueError("Bootstrap requires nonempty values and positive n_boot")
     rng = np.random.default_rng(seed)
     samples = []
     if patient_ids is None:
         n = len(values)
         for _ in range(n_boot):
             idx = rng.integers(0, n, n)
-            samples.append(float(statistic(values[idx])))
+            value = statistic(values[idx])
+            if value is not None and np.isfinite(value):
+                samples.append(float(value))
     else:
         patient_ids = np.asarray(patient_ids)
+        if patient_ids.ndim != 1 or len(patient_ids) != len(values):
+            raise ValueError("patient_ids must have one entry per prediction")
+        if any(value is None or str(value).strip().lower() in {"", "nan", "none"} for value in patient_ids):
+            raise ValueError("patient_ids contain missing identifiers")
         unique = np.unique(patient_ids)
+        groups = [np.flatnonzero(patient_ids == patient) for patient in unique]
         for _ in range(n_boot):
-            chosen = rng.choice(unique, size=len(unique), replace=True)
-            mask = np.isin(patient_ids, chosen)
-            if not np.any(mask):
-                continue
-            samples.append(float(statistic(values[mask])))
+            chosen = rng.integers(0, len(groups), size=len(groups))
+            # Repeated draws must repeat ALL observations for that patient.
+            idx = np.concatenate([groups[i] for i in chosen])
+            value = statistic(values[idx])
+            if value is not None and np.isfinite(value):
+                samples.append(float(value))
     if not samples:
-        return [float("nan"), float("nan")]
+        return None
     return [float(x) for x in np.quantile(samples, [0.025, 0.975])]
 
 
@@ -86,7 +98,7 @@ def binary_confusion(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     spec = tn / (tn + fp) if (tn + fp) else None
     prec = tp / (tp + fp) if (tp + fp) else None
     npv = tn / (tn + fn) if (tn + fn) else None
-    f1 = (2 * prec * sens / (prec + sens)) if (prec is not None and sens is not None and (prec + sens)) else None
+    f1 = 2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else None
     return {
         "tp": tp,
         "tn": tn,
@@ -150,7 +162,12 @@ def evaluate_predictions(
     seed: int = 42,
 ) -> dict:
     """Compute five-class, referable-DR, severe-DR, and calibration metrics."""
-    y_true = np.asarray(y_true, dtype=np.int64)
+    labels = np.asarray(y_true, dtype=np.float64)
+    if labels.ndim != 1 or not len(labels) or not np.isfinite(labels).all() or not np.equal(labels, np.floor(labels)).all():
+        raise ValueError("y_true must be a nonempty vector of integer grades")
+    y_true = labels.astype(np.int64)
+    if not np.isfinite(referable_threshold) or not 0 <= referable_threshold <= 1:
+        raise ValueError("referable_threshold must be in [0, 1]")
     probabilities = _as_probs(probabilities)
     if len(y_true) != len(probabilities):
         raise ValueError("y_true and probabilities length mismatch")
@@ -166,9 +183,9 @@ def evaluate_predictions(
         "n": int(len(y_true)),
         "accuracy": float(accuracy_score(y_true, predicted)),
         "balanced_accuracy": float(balanced_accuracy_score(y_true, predicted)),
-        "macro_precision": float(precision_score(y_true, predicted, average="macro", zero_division=0)),
-        "macro_recall": float(recall_score(y_true, predicted, average="macro", zero_division=0)),
-        "macro_f1": float(f1_score(y_true, predicted, average="macro", zero_division=0)),
+        "macro_precision": float(precision_score(y_true, predicted, labels=range(5), average="macro", zero_division=0)),
+        "macro_recall": float(recall_score(y_true, predicted, labels=range(5), average="macro", zero_division=0)),
+        "macro_f1": float(f1_score(y_true, predicted, labels=range(5), average="macro", zero_division=0)),
         "weighted_f1": float(f1_score(y_true, predicted, average="weighted", zero_division=0)),
         "quadratic_weighted_kappa": float(
             cohen_kappa_score(y_true, predicted, weights="quadratic", labels=range(5))
@@ -187,6 +204,8 @@ def evaluate_predictions(
             y_true, predicted, labels=range(5), target_names=CLASS_NAMES, output_dict=True, zero_division=0
         ),
     }
+    if not np.isfinite(five_class["quadratic_weighted_kappa"]):
+        five_class["quadratic_weighted_kappa"] = None
 
     # Referable DR: grade ≥ 2 (moderate or worse). Score = P(class≥2).
     y_ref = y_true >= 2
@@ -203,10 +222,10 @@ def evaluate_predictions(
     )
 
     def _sens_from_pairs(rows):
-        return binary_confusion(rows[:, 0].astype(bool), rows[:, 1].astype(bool))["sensitivity"] or 0.0
+        return binary_confusion(rows[:, 0].astype(bool), rows[:, 1].astype(bool))["sensitivity"]
 
     def _spec_from_pairs(rows):
-        return binary_confusion(rows[:, 0].astype(bool), rows[:, 1].astype(bool))["specificity"] or 0.0
+        return binary_confusion(rows[:, 0].astype(bool), rows[:, 1].astype(bool))["specificity"]
 
     pairs_ref = np.column_stack([y_ref.astype(float), pred_ref.astype(float)])
     referable["sensitivity_ci95"] = bootstrap_ci(pairs_ref, _sens_from_pairs, seed=seed, patient_ids=patient_ids)
@@ -285,9 +304,9 @@ def write_evaluation_run(result: dict, output_root: Path | str = DEFAULT_OUTPUT_
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     dataset = result.get("dataset", {}).get("name", "dataset")
     split = result.get("dataset", {}).get("split", "split")
-    run_dir = root / f"{stamp}_{dataset}_{split}"
+    slug = lambda value: re.sub(r"[^A-Za-z0-9_-]+", "_", str(value))[:80] or "unnamed"
+    run_dir = root / f"{stamp}_{slug(dataset)}_{slug(split)}_{uuid.uuid4().hex[:8]}"
     run_dir.mkdir(parents=True, exist_ok=False)
-    (run_dir / "metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
 
     # Flatten CSV for five-class per-class rows.
     lines = ["class,precision,recall,f1,support"]
@@ -337,6 +356,10 @@ def write_evaluation_run(result: dict, output_root: Path | str = DEFAULT_OUTPUT_
         "clinical effectiveness or regulatory approval.",
     ]
     (run_dir / "report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+    # Publish metrics last; the dashboard only lists fully written runs.
+    temporary = run_dir / "metrics.json.tmp"
+    temporary.write_text(json.dumps(result, indent=2, allow_nan=False), encoding="utf-8")
+    temporary.replace(run_dir / "metrics.json")
     return run_dir
 
 
@@ -344,12 +367,12 @@ def load_predictions_npz(path: Path | str) -> tuple[np.ndarray, np.ndarray, Opti
     """Load ``y_true``, ``probabilities``, optional ``patient_ids`` from NPZ/JSON."""
     path = Path(path)
     if path.suffix.lower() == ".npz":
-        data = np.load(path, allow_pickle=True)
-        y_true = data["y_true"]
-        probabilities = data["probabilities"]
-        patient_ids = data["patient_ids"] if "patient_ids" in data.files else None
-        meta = {k: data[k].item() if data[k].shape == () else data[k].tolist()
-                for k in data.files if k not in {"y_true", "probabilities", "patient_ids"}}
+        with np.load(path, allow_pickle=False) as data:
+            y_true = data["y_true"]
+            probabilities = data["probabilities"]
+            patient_ids = data["patient_ids"] if "patient_ids" in data.files else None
+            meta = {k: data[k].item() if data[k].shape == () else data[k].tolist()
+                    for k in data.files if k not in {"y_true", "probabilities", "patient_ids"}}
         return y_true, probabilities, patient_ids, meta
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     y_true = np.asarray(payload["y_true"])
@@ -364,6 +387,7 @@ def import_legacy_training_metrics(path: Path | str, dataset_name: str = "aptos_
     path = Path(path)
     raw = json.loads(path.read_text(encoding="utf-8"))
     # Prefer validation block when present.
+    split = "validation" if raw.get("validation") else "test" if raw.get("test") else "unspecified"
     block = raw.get("validation") or raw.get("test") or raw
     if "accuracy" not in block:
         raise ValueError(f"Unrecognized metrics file: {path}")
@@ -383,7 +407,7 @@ def import_legacy_training_metrics(path: Path | str, dataset_name: str = "aptos_
         "source_file": str(path),
         "dataset": {
             "name": dataset_name,
-            "split": "validation",
+            "split": split,
             "n": int(block.get("n") or 0),
             "class_names": CLASS_NAMES,
             "patient_level_bootstrap": False,
@@ -392,12 +416,12 @@ def import_legacy_training_metrics(path: Path | str, dataset_name: str = "aptos_
         "five_class": {
             "n": int(block.get("n") or 0),
             "accuracy": float(block["accuracy"]),
-            "balanced_accuracy": float(block.get("balanced_accuracy") or 0),
+            "balanced_accuracy": block.get("balanced_accuracy"),
             "macro_precision": None,
             "macro_recall": float(np.mean(per_class_recall)) if per_class_recall else None,
-            "macro_f1": float(block.get("macro_f1") or 0),
+            "macro_f1": block.get("macro_f1"),
             "weighted_f1": None,
-            "quadratic_weighted_kappa": float(block.get("quadratic_weighted_kappa") or 0),
+            "quadratic_weighted_kappa": block.get("quadratic_weighted_kappa"),
             "per_class": per_class,
             "confusion_matrix": cm,
             "classification_report": block.get("classification_report"),

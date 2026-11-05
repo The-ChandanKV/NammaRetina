@@ -7,7 +7,7 @@
     <p class="muted">Sign in to access patient scans and reports.</p>
     <p class="note" style="margin-top:0.25rem"><a href="{{ url_for('landing') }}">← Back to NammaRetina home</a></p>
 
-    <a href="{{ url_for('auth_google') }}" class="sso-btn" id="googleLoginBtn">
+    <a href="{{ url_for('auth_google', next=next_url) }}" class="sso-btn" id="googleLoginBtn">
       <svg viewBox="0 0 24 24" width="20" height="20">
         <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
         <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
@@ -21,6 +21,7 @@
 
     <form method="POST" id="loginForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
       <div class="field"><label for="email">Email</label>
         <input id="email" name="email" type="email" autocomplete="email" required autofocus placeholder="you@example.com"></div>
       <div class="field"><label for="password">Password</label>

@@ -23,20 +23,31 @@ def load_run(run_dir: Path | str) -> Optional[dict]:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        result = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(result, dict) or result.get("status") != "complete":
+            return None
+        if not all(isinstance(result.get(key), dict) for key in
+                   ("dataset", "model", "five_class", "referable_dr", "severe_dr", "calibration")):
+            return None
+        # A syntactically valid but incomplete file must not crash formatting.
+        for key in ("accuracy", "balanced_accuracy", "macro_f1", "quadratic_weighted_kappa"):
+            value = result["five_class"].get(key)
+            if key not in result["five_class"] or (value is not None and not isinstance(value, (int, float))):
+                return None
+        return result
     except (OSError, ValueError):
         return None
 
 
 def latest_evaluation(output_root: Path | str = DEFAULT_OUTPUT_ROOT) -> Optional[dict]:
     runs = list_evaluation_runs(output_root)
-    if not runs:
-        return None
-    payload = load_run(runs[0])
-    if payload:
-        payload["run_id"] = runs[0].name
-        payload["run_path"] = str(runs[0])
-    return payload
+    for run in runs:
+        payload = load_run(run)
+        if payload:
+            payload["run_id"] = run.name
+            payload["run_path"] = str(run)
+            return payload
+    return None
 
 
 def ensure_seed_evaluation(output_root: Path | str = DEFAULT_OUTPUT_ROOT) -> Optional[dict]:

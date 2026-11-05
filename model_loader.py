@@ -11,6 +11,8 @@ import hashlib
 import tempfile
 import zipfile
 import os
+import threading
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -24,6 +26,9 @@ logger = logging.getLogger(__name__)
 _model = None
 _model_available = None
 _model_sha256 = None
+_load_lock = threading.RLock()
+_last_failure = 0.0
+RETRY_DELAY_SECONDS = 30
 
 
 def file_sha256(path):
@@ -103,7 +108,7 @@ def ensure_model_file(dest: str | Path | None = None) -> Path:
     return path
 
 
-def load_model():
+def _load_model_once():
     """Load the trained Keras model (singleton). Returns None if unavailable."""
     global _model, _model_available, _model_sha256
 
@@ -120,7 +125,7 @@ def load_model():
         return None
     if not model_file.exists() or model_file.stat().st_size == 0:
         logger.warning(
-            "Trained model not found at %s. Using fallback predictions. "
+            "Trained model not found at %s. Analysis is unavailable. "
             "Train with train_improved_dr_model.ipynb and set MODEL_URL.",
             MODEL_PATH,
         )
@@ -146,11 +151,22 @@ def load_model():
         return None
 
 
+def load_model():
+    """Serialize initial loading and retry transient failures after a short backoff."""
+    global _model_available, _last_failure
+    with _load_lock:
+        if _model_available is False:
+            if time.monotonic() - _last_failure < RETRY_DELAY_SECONDS:
+                return None
+            _model_available = None
+        model = _load_model_once()
+        if _model_available is False:
+            _last_failure = time.monotonic()
+        return model
+
+
 def is_model_available() -> bool:
-    """Check whether the trained model has been loaded."""
-    if _model_available is None:
-        load_model()
-    return bool(_model_available)
+    return load_model() is not None
 
 
 def model_fingerprint():

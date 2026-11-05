@@ -65,7 +65,7 @@ Docker builds this automatically during image creation. Locally, rebuild wheneve
 python app.py
 ```
 
-Then open **http://localhost:5001** — the public landing page loads at `/`. Use **Doctor Sign In** for the clinical app.
+Then open **http://localhost:5001** — the public landing page loads at `/`. Use **Sign In** for the clinical app.
 
 ### 6. Create your account
 
@@ -102,7 +102,7 @@ When you upload a retinal image through the web interface, the following pipelin
 |---|---|---|---|
 | `/` | GET | Public | Premium landing page (Vite build in `static/landing/`) |
 | `/landing/<path>` | GET | Public | Landing JS/CSS/images only (no patient files) |
-| `/login` | GET/POST | Public | Doctor sign-in (existing Flask auth) |
+| `/login` | GET/POST | Public | Sign-in (existing Flask auth) |
 | `/register` | GET/POST | Public* | First-user bootstrap / admin account creation |
 | `/logout` | POST | — | Sign out → returns to landing |
 | `/scan` | GET | Required | Retinal upload form (endpoint name: `index`) |
@@ -121,7 +121,7 @@ When you upload a retinal image through the web interface, the following pipelin
 
 - Source: `landing-source/` (React + Vite + Tailwind)
 - Build output: `static/landing/` (committed or produced in Docker)
-- Doctor Sign In uses a real `<a href="/signin">` so Flask handles authentication
+- Sign In uses a real `<a href="/signin">` so Flask handles authentication
 - `/static/uploads|heatmaps|reports|simulations` remain blocked; only `/static/css/*` and `/landing/*` are public
 
 ---

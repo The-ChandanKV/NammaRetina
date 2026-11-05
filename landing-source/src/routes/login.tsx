@@ -7,17 +7,17 @@ import { Logo } from "@/components/landing/Logo";
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Doctor Sign In — NammaRetina" },
+      { title: "Sign In — NammaRetina" },
       {
         name: "description",
         content:
-          "Doctor sign-in for the NammaRetina platform. Authentication is provided by the deployed NammaRetina application.",
+          "Sign-in for the NammaRetina platform. Authentication is provided by the deployed NammaRetina application.",
       },
-      { property: "og:title", content: "Doctor Sign In — NammaRetina" },
+      { property: "og:title", content: "Sign In — NammaRetina" },
       {
         property: "og:description",
         content:
-          "Doctor sign-in for the NammaRetina platform. Authentication is provided by the deployed NammaRetina application.",
+          "Sign-in for the NammaRetina platform. Authentication is provided by the deployed NammaRetina application.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -39,7 +39,7 @@ function LoginPage() {
         <div className="flex justify-center">
           <Logo className="h-10 w-10" />
         </div>
-        <h1 className="mt-5 text-2xl font-bold tracking-tight text-foreground">Doctor Sign In</h1>
+        <h1 className="mt-5 text-2xl font-bold tracking-tight text-foreground">Sign In</h1>
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           Sign-in is handled by the deployed NammaRetina application. This preview hosts the public
           landing page only—no new accounts or credentials are created here.

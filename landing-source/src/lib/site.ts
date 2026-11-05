@@ -2,7 +2,7 @@
  * Site-wide configuration for the NammaRetina landing page.
  *
  * The landing page is a public, static-facing entry point. In the final
- * Flask deployment the doctor sign-in route lives at `/signin`.
+ * Flask deployment the sign-in route lives at `/signin`.
  * `/login` remains as a back-compat alias.
  */
 export const site = {

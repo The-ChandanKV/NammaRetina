@@ -9,7 +9,7 @@ npm ci
 npm run dev
 ```
 
-Opens a preview on http://localhost:5173. Doctor Sign In links navigate to `/signin`
+Opens a preview on http://localhost:5173. Sign In links navigate to `/signin`
 (expects the Flask app when integrated).
 
 ## Production build (for Flask)

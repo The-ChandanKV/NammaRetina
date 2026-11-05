@@ -6,9 +6,9 @@ import { site } from "@/lib/site";
 
 describe("Flask landing integration", () => {
   it("renders real document-navigation links to the Flask sign-in page", () => {
-    const html = renderToStaticMarkup(<DoctorSignInLink>Doctor Sign In</DoctorSignInLink>);
+    const html = renderToStaticMarkup(<DoctorSignInLink>Sign In</DoctorSignInLink>);
     expect(html).toContain('href="/signin"');
-    expect(html).toContain("Doctor Sign In");
+    expect(html).toContain("Sign In");
   });
   it("renders the app with valid navigation targets and sign-in actions", () => {
     const html = renderToStaticMarkup(<LandingApp />);

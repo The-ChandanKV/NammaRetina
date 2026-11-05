@@ -11,7 +11,7 @@ import { Footer } from "@/components/landing/Footer";
 
 /**
  * Public marketing landing page — compiled to static assets and served by Flask at `/`.
- * Doctor Sign In uses a real document navigation to Flask `/login` (not client routing).
+ * Sign In uses a real document navigation to Flask `/signin` (not client routing).
  */
 export function LandingApp() {
   return (

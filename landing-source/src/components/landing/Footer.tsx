@@ -45,7 +45,7 @@ export function Footer() {
               <li><a className="transition-colors hover:text-primary" href="#platform">Features</a></li>
               <li><a className="transition-colors hover:text-primary" href="#how-it-works">How It Works</a></li>
               <li><a className="transition-colors hover:text-primary" href="#showcase">Interactive Showcase</a></li>
-              <li><DoctorSignInLink className="transition-colors hover:text-primary">Doctor Sign In</DoctorSignInLink></li>
+              <li><DoctorSignInLink className="transition-colors hover:text-primary">Sign In</DoctorSignInLink></li>
             </ul>
           </nav>
           <nav aria-label="Technology">

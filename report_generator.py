@@ -1,299 +1,166 @@
-"""
-NammaRetina - PDF Report Generator (Phase 12)
-Generates a professional medical report PDF using ReportLab.
-"""
-
+"""Standardized NammaRetina screening PDFs, using the same data as the web UI."""
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
+from xml.sax.saxutils import escape
 
+from PIL import Image
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch, mm
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Image as RLImage,
-    Table,
-    TableStyle,
-    HRFlowable,
-)
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
+
+from reporting import build_report_context, pdf_filename
 
 logger = logging.getLogger(__name__)
 
-PAGE_WIDTH, PAGE_HEIGHT = A4
-
-
-def _get_styles():
-    """Build custom paragraph styles for the report."""
-    styles = getSampleStyleSheet()
-
-    styles.add(ParagraphStyle(
-        "ReportTitle",
-        parent=styles["Title"],
-        fontSize=22,
-        textColor=colors.HexColor("#1a5276"),
-        spaceAfter=6,
-        alignment=TA_CENTER,
-    ))
-    styles.add(ParagraphStyle(
-        "ReportSubtitle",
-        parent=styles["Normal"],
-        fontSize=11,
-        textColor=colors.HexColor("#5d6d7e"),
-        alignment=TA_CENTER,
-        spaceAfter=12,
-    ))
-    styles.add(ParagraphStyle(
-        "SectionHeading",
-        parent=styles["Heading2"],
-        fontSize=14,
-        textColor=colors.HexColor("#1a5276"),
-        spaceBefore=16,
-        spaceAfter=6,
-        borderWidth=0,
-    ))
-    styles.add(ParagraphStyle(
-        "BodyText2",
-        parent=styles["Normal"],
-        fontSize=10,
-        leading=14,
-        alignment=TA_JUSTIFY,
-        spaceAfter=6,
-    ))
-    styles.add(ParagraphStyle(
-        "SmallGray",
-        parent=styles["Normal"],
-        fontSize=8,
-        textColor=colors.HexColor("#7f8c8d"),
-        alignment=TA_CENTER,
-    ))
-
-    return styles
-
 
 def generate_pdf(
-    report_id: int,
-    patient: dict,
-    severity: int,
-    severity_label: str,
-    confidence: float,
-    recommendation: str,
-    llm_summary: str,
-    heatmap_path: str | None = None,
-    progression_graph_path: str | None = None,
-    simulation_path: str | None = None,
-    report_date: str | None = None,
-    output_dir: str | None = None,
+    report_id: int, patient: dict, severity: int, severity_label: str,
+    confidence: float, recommendation: str, llm_summary: str,
+    heatmap_path: str | None = None, progression_graph_path: str | None = None,
+    simulation_path: str | None = None, report_date: str | None = None,
+    output_dir: str | None = None, report_context: dict | None = None,
+    image_path: str | None = None,
 ) -> str:
-    """Generate a PDF medical report and return the file path.
+    """Render all eight report sections, including explicit missing-data states.
 
-    Parameters
-    ----------
-    report_id : int
-        The database report ID.
-    patient : dict
-        Patient record with keys: name, age, gender, diabetes_history.
-    severity : int
-        Predicted DR severity (0-4).
-    severity_label : str
-        Human-readable severity label.
-    confidence : float
-        Model confidence (0.0-1.0).
-    recommendation : str
-        Treatment recommendation string.
-    llm_summary : str
-        LLM-generated plain-language explanation.
-    heatmap_path : str, optional
-        Path to the Grad-CAM heatmap image.
-    progression_graph_path : str, optional
-        Path to the progression graph image.
-    simulation_path : str, optional
-        Path to the disease spread simulation image.
-    report_date : str, optional
-        Report date string (defaults to today).
-    output_dir : str, optional
-        Directory to save the PDF (defaults to reports/).
-
-    Returns
-    -------
-    str
-        Absolute path to the generated PDF file.
+    Dynamic text is plain text, never ReportLab markup. Legacy callers remain
+    supported; web callers supply the exact examination context shown on screen.
+    Patient-wide progression graphs are intentionally not used in visit reports.
     """
-    if report_date is None:
-        report_date = datetime.now().strftime("%Y-%m-%d")
-
-    if output_dir is None:
-        output_dir = str(Path(__file__).resolve().parent / "reports")
-
-    out_dir = Path(output_dir)
+    context = report_context or build_report_context({
+        "report_id": report_id, "patient_id": patient.get("patient_id"),
+        "severity": severity, "confidence": confidence,
+        "recommendation": recommendation, "llm_summary": llm_summary,
+        "date": report_date or datetime.now().strftime("%Y-%m-%d"),
+    }, patient, [])
+    report = context["report"]
+    patient = context["patient"]
+    out_dir = Path(output_dir or Path(__file__).resolve().parent / "reports")
     out_dir.mkdir(parents=True, exist_ok=True)
-    pdf_path = out_dir / f"report_{report_id}.pdf"
+    pdf_path = out_dir / pdf_filename(report_id)
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle("NRTitle", parent=styles["Title"], fontSize=23,
+                              textColor=colors.HexColor("#008b80"), alignment=TA_CENTER))
+    styles.add(ParagraphStyle("NRBody", parent=styles["BodyText"], fontSize=9,
+                              leading=13, spaceAfter=7, splitLongWords=True))
+    styles.add(ParagraphStyle("NRSmall", parent=styles["NRBody"], fontSize=8, leading=11,
+                              textColor=colors.HexColor("#526476")))
+    styles.add(ParagraphStyle("NRHeading", parent=styles["Heading2"], fontSize=12,
+                              textColor=colors.HexColor("#008b80"), spaceBefore=13,
+                              spaceAfter=7, keepWithNext=True))
 
-    styles = _get_styles()
-    doc = SimpleDocTemplate(
-        str(pdf_path),
-        pagesize=A4,
-        leftMargin=20 * mm,
-        rightMargin=20 * mm,
-        topMargin=15 * mm,
-        bottomMargin=15 * mm,
-    )
+    def text(value, small=False):
+        value = "Not provided" if value is None or str(value).strip() == "" else str(value)
+        return Paragraph(escape(value).replace("\n", "<br/>"), styles["NRSmall" if small else "NRBody"])
 
-    elements = []
+    width = A4[0] - 40 * mm
+    elements = [Paragraph("NammaRetina", styles["NRTitle"]),
+                text("AI-assisted diabetic retinopathy screening report"),
+                text(f"Report #{report_id} | Examination: {report['date']} | Format v{context['format_version']}", True)]
 
-    # ── Title ────────────────────────────────────────────────────────────────
-    elements.append(Paragraph("NammaRetina", styles["ReportTitle"]))
-    elements.append(Paragraph(
-        "AI-Based Diabetic Retinopathy Diagnostic Report",
-        styles["ReportSubtitle"],
-    ))
-    elements.append(HRFlowable(
-        width="100%", thickness=1.5,
-        color=colors.HexColor("#1a5276"), spaceAfter=12,
-    ))
+    def heading(section_id):
+        idx, title = next((i, title) for i, (key, title) in enumerate(context["sections"], 1) if key == section_id)
+        elements.append(Paragraph(f"{idx:02d}. {escape(title)}", styles["NRHeading"]))
 
-    # ── Patient Details ──────────────────────────────────────────────────────
-    elements.append(Paragraph("Patient Information", styles["SectionHeading"]))
+    def data_table(rows, header=False):
+        cells = [[text(v, True) for v in row] for row in rows]
+        columns = len(rows[0])
+        table = Table(cells, colWidths=([38 * mm, width - 38 * mm] if columns == 2 else [width / columns] * columns),
+                      hAlign="LEFT", repeatRows=1 if header else 0, splitInRow=1)
+        table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 0), (0 if not header else -1, -1 if not header else 0), colors.HexColor("#eef7f6")),
+            ("LINEBELOW", (0, 0), (-1, -1), .3, colors.HexColor("#dfe7ef")),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(table)
 
-    patient_data = [
-        ["Name", str(patient.get("name", "N/A"))],
-        ["Age", str(patient.get("age", "N/A"))],
-        ["Gender", str(patient.get("gender", "N/A"))],
-        ["Diabetes History", str(patient.get("diabetes_history", "N/A"))],
-        ["Report Date", report_date],
-        ["Report ID", str(report_id)],
-    ]
-    patient_table = Table(patient_data, colWidths=[120, 350])
-    patient_table.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1a5276")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    elements.append(patient_table)
-    elements.append(Spacer(1, 10))
+    def image(path, label):
+        elements.append(text(label))
+        if path and Path(path).is_file():
+            try:
+                # Decode now: corrupt image files must not abort doc.build later.
+                with Image.open(path) as source:
+                    source.load()
+                    w, h = source.size
+                scale = min(width / w, 60 * mm / h)
+                flow = RLImage(str(path), width=w * scale, height=h * scale)
+                flow.hAlign = "CENTER"
+                elements.extend([flow, Spacer(1, 3 * mm)])
+                return
+            except Exception:
+                logger.warning("Could not embed %s", label)
+        elements.append(text("Image unavailable for this examination.", True))
 
-    # ── Prediction Result ────────────────────────────────────────────────────
-    elements.append(Paragraph("Diagnosis Result", styles["SectionHeading"]))
-
-    # Show N/A when no real prediction was made (confidence 0.0 = model unavailable),
-    # so the report never presents a fabricated 0.0% as a genuine reading.
-    if confidence and confidence > 0:
-        confidence_pct = round(confidence * 100, 1) if confidence <= 1.0 else round(confidence, 1)
-        confidence_display = f"{confidence_pct}%"
+    heading("patient")
+    data_table([(label, patient.get(key)) for label, key in [
+        ("Patient ID", "patient_id"), ("Name", "name"), ("Age", "age"),
+        ("Gender", "gender"), ("Diabetes history", "diabetes_history"),
+    ]])
+    heading("screening")
+    data_table([
+        ("Classification", report["severity_label"]),
+        ("Grade", f"{report['severity']}/4" if report["model_used"] else "Unavailable"),
+        ("Model confidence", f"{report['confidence_pct']:.1f}%" if report["model_used"] else "Unavailable"),
+        ("Recorded change", context["progression_status"]),
+    ])
+    elements.append(text("Model confidence is separate from the model's measured accuracy.", True))
+    heading("interpretation")
+    for item in context["interpretation"]:
+        elements.append(text(item["label"] + ": " + item["text"]))
+    heading("recommendation")
+    elements.append(text(context["recommendation"]))
+    elements.append(text("The responsible clinician should confirm the appropriate next step.", True))
+    heading("history")
+    elements.append(text(context["longitudinal"]["summary"]))
+    if context["progression"]:
+        data_table([("Report", "Date", "Grade", "Recorded change")] + [
+            (f"#{row['report_id']}", row["date"], f"{row['current_severity']}/4", row["status"])
+            for row in context["progression"]
+        ], header=True)
     else:
-        confidence_display = "N/A (model unavailable)"
+        elements.append(text("No valid model predictions are available for comparison."))
+    elements.append(text("Only examinations through this report are included. This is an observed history, not a clinical forecast.", True))
+    heading("imaging")
+    image(image_path, "Original retinal scan")
+    image(heatmap_path, "Grad-CAM heatmap")
+    elements.append(text("Grad-CAM highlights model attention; it does not independently confirm retinal lesions.", True))
+    heading("simulation")
+    image(simulation_path, "Illustrative spatial simulation - not a clinical forecast")
+    elements.append(text("Deterministic Grad-CAM attention remapping. This does not predict future lesions or disease spread.", True))
+    heading("supplemental")
+    elements.append(text(context["llm_summary"] or "No supplementary AI explanation is stored for this examination."))
+    elements.append(text("Supplementary AI text is stored narrative and requires clinician review. The standardized interpretation above is based on recorded examination fields.", True))
+    elements.append(text(context["disclaimer"], True))
 
-    # Severity colour coding
-    severity_colours = {
-        0: colors.HexColor("#27ae60"),
-        1: colors.HexColor("#f39c12"),
-        2: colors.HexColor("#e67e22"),
-        3: colors.HexColor("#e74c3c"),
-        4: colors.HexColor("#c0392b"),
-    }
-    sev_color = severity_colours.get(severity, colors.black)
+    def footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#526476"))
+        canvas.drawString(20 * mm, 10 * mm, f"NammaRetina | Report #{report_id} | Format v{context['format_version']}")
+        canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, f"Page {doc.page}")
+        canvas.restoreState()
 
-    prediction_data = [
-        ["Severity Level", f"{severity_label} (Stage {severity}/4)"],
-        ["Confidence", confidence_display],
-    ]
-    prediction_table = Table(prediction_data, colWidths=[120, 350])
-    prediction_table.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1a5276")),
-        ("TEXTCOLOR", (1, 0), (1, 0), sev_color),
-        ("FONTNAME", (1, 0), (1, 0), "Helvetica-Bold"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    elements.append(prediction_table)
-    elements.append(Spacer(1, 10))
-
-    # ── Grad-CAM Heatmap ─────────────────────────────────────────────────────
-    if heatmap_path and Path(heatmap_path).exists():
-        elements.append(Paragraph("Grad-CAM Heatmap", styles["SectionHeading"]))
-        elements.append(Paragraph(
-            "Grad-CAM highlights class-specific activation regions. Highlighted areas "
-            "are not confirmed pathological lesions.",
-            styles["BodyText2"],
-        ))
-        try:
-            img = RLImage(heatmap_path, width=3.5 * inch, height=3.5 * inch)
-            img.hAlign = "CENTER"
-            elements.append(img)
-        except Exception as exc:
-            logger.warning("Could not embed heatmap image: %s", exc)
-        elements.append(Spacer(1, 10))
-
-    # ── Progression Graph ────────────────────────────────────────────────────
-    if progression_graph_path and Path(progression_graph_path).exists():
-        elements.append(Paragraph("Progression History", styles["SectionHeading"]))
-        elements.append(Paragraph(
-            "Severity trend across all recorded visits for this patient.",
-            styles["BodyText2"],
-        ))
-        try:
-            img = RLImage(progression_graph_path, width=4.5 * inch, height=2.8 * inch)
-            img.hAlign = "CENTER"
-            elements.append(img)
-        except Exception as exc:
-            logger.warning("Could not embed progression graph: %s", exc)
-        elements.append(Spacer(1, 10))
-
-    # ── Simulation ───────────────────────────────────────────────────────────
-    if simulation_path and Path(simulation_path).exists():
-        elements.append(Paragraph(
-            "Illustrative Spatial Simulation — Not a Clinical Forecast",
-            styles["SectionHeading"],
-        ))
-        elements.append(Paragraph(
-            "Deterministic Grad-CAM attention remapping with field-of-view masking. "
-            "This does not invent lesions or predict where diabetic retinopathy will spread.",
-            styles["BodyText2"],
-        ))
-        try:
-            img = RLImage(simulation_path, width=3.5 * inch, height=3.5 * inch)
-            img.hAlign = "CENTER"
-            elements.append(img)
-        except Exception as exc:
-            logger.warning("Could not embed simulation image: %s", exc)
-        elements.append(Spacer(1, 10))
-
-    # ── Treatment Recommendation ─────────────────────────────────────────────
-    elements.append(Paragraph("Treatment Recommendation", styles["SectionHeading"]))
-    elements.append(Paragraph(recommendation, styles["BodyText2"]))
-    elements.append(Spacer(1, 6))
-
-    # ── LLM Explanation ──────────────────────────────────────────────────────
-    elements.append(Paragraph("AI-Generated Explanation", styles["SectionHeading"]))
-    elements.append(Paragraph(llm_summary, styles["BodyText2"]))
-    elements.append(Spacer(1, 20))
-
-    # ── Footer ───────────────────────────────────────────────────────────────
-    elements.append(HRFlowable(
-        width="100%", thickness=0.5,
-        color=colors.HexColor("#bdc3c7"), spaceAfter=6,
-    ))
-    elements.append(Paragraph(
-        "This report was generated by NammaRetina — AI-assisted diabetic retinopathy "
-        "screening research software. Technical explanations (Grad-CAM / LIME) and "
-        "illustrative overlays do not establish clinical effectiveness or regulatory "
-        "approval. A qualified clinician must review findings before any care decision. "
-        "Screening assistance is not a confirmed diagnosis.",
-        styles["SmallGray"],
-    ))
-
-    # Build PDF
-    doc.build(elements)
-    logger.info("PDF report generated: %s", pdf_path)
+    # Publish a complete PDF atomically, even when requests overlap.
+    fd, temporary = tempfile.mkstemp(prefix=f".report_{report_id}_", suffix=".pdf", dir=out_dir)
+    os.close(fd)
+    try:
+        doc = SimpleDocTemplate(temporary, pagesize=A4, leftMargin=20 * mm,
+                                rightMargin=20 * mm, topMargin=16 * mm, bottomMargin=20 * mm,
+                                title=f"NammaRetina Report {report_id}", author="NammaRetina",
+                                subject=f"Standardized screening report v{context['format_version']}")
+        doc.build(elements, onFirstPage=footer, onLaterPages=footer)
+        os.replace(temporary, pdf_path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    logger.info("Standardized PDF generated for report %s", report_id)
     return str(pdf_path)

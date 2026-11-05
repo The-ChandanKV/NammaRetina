@@ -1,313 +1,156 @@
 {% extends "base.html" %}
 {% block title %}Report #{{ report.report_id }}{% endblock %}
 {% block content %}
-<p class="muted" style="margin:0 0 .75rem;font-size:.82rem">
-  <a href="{{ url_for('dashboard') }}">Dashboard</a> /
-  <a href="{{ url_for('patient_detail', patient_id=patient.patient_id) }}">{{ patient.name }}</a>
-</p>
+<p class="muted report-breadcrumb"><a href="{{ url_for('dashboard') }}">Dashboard</a> /
+  <a href="{{ url_for('patient_detail', patient_id=patient.patient_id) }}">{{ patient.name }}</a> / Report #{{ report.report_id }}</p>
 <div class="page-head">
   <div>
-    <p class="page-kicker">Diagnostic report</p>
+    <p class="page-kicker">Retinal screening report · Format v{{ report_view.format_version }}</p>
     <h1>Report #{{ report.report_id }}</h1>
-    <p class="page-sub">{{ patient.name }} · {{ report.date }}</p>
+    <p class="page-sub">{{ patient.name }} · {{ report.date or 'Date not recorded' }}</p>
   </div>
-  <div style="display:flex;gap:.55rem;flex-wrap:wrap">
+  <div class="report-actions">
     <a id="btn-rescan" class="btn" href="{{ url_for('index', patient_id=patient.patient_id) }}">+ Follow-up scan</a>
-    {% if model_used and image_available %}
-    <a id="btn-xai" class="btn" href="{{ url_for('xai_explain', report_id=report.report_id) }}">Explain AI decision</a>
-    <form method="POST" action="{{ url_for('regenerate_report', report_id=report.report_id) }}" style="margin:0">
+    {% if model_used and image_available %}<a id="btn-xai" class="btn" href="{{ url_for('xai_explain', report_id=report.report_id) }}">Explain AI decision</a>{% endif %}
+    {% if model_used %}
+    <form method="POST" action="{{ url_for('regenerate_report', report_id=report.report_id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button id="btn-regen" class="btn" type="submit">Regenerate PDF</button></form>
+      <button id="btn-regen" class="btn" type="submit">Regenerate PDF</button>
+    </form>
+    <a id="btn-pdf" class="btn btn-primary" href="{{ url_for('download_report', report_id=report.report_id) }}">Export PDF Report</a>
     {% endif %}
-    {% if pdf_exists and model_used %}<a id="btn-pdf" class="btn btn-primary" href="{{ url_for('download_report', report_id=report.report_id) }}">Export PDF Report</a>{% endif %}
   </div>
 </div>
-
 {% if media_missing %}
-<div class="flash flash-warning" role="alert">
-  <span>Scan images for this report are missing from storage. Severity text below may still reflect a recorded score, but Grad-CAM, simulation, XAI, and PDF actions stay unavailable until a new scan is uploaded.</span>
-</div>
+<div class="flash flash-warning" role="alert"><span>The original scan is unavailable in storage. Recorded results remain visible and PDF export includes a missing-image notice. A follow-up scan can create a new complete examination.</span></div>
 {% endif %}
-
-<div class="grid grid-2">
-  <div>
-    <div class="card hero-result">
-      <span class="sev sev-{{ severity }}">{{ severity_label }}{% if model_used %} · Stage {{ severity }}/4{% endif %}</span>
-      {% if model_used %}
-      <div class="gauge" style="--pct: {{ confidence_pct }}; --c: var(--sev-{{ severity }})">
-        <div><span>{{ confidence_pct }}%</span><small>confidence</small></div></div>
-      {% else %}
-      <p class="muted" style="margin:1.5rem 0">Confidence N/A (model unavailable)</p>
-      {% endif %}
-      {% if model_used %}<div class="sev-scale">
-        {% for i in range(5) %}<div class="{{ 'on' if i <= severity }}" style="{{ 'background:var(--sev-%d);color:var(--sev-%d)'|format(i,i) if i <= severity }}"></div>{% endfor %}
-      </div>
-      {% endif %}<p style="margin-top:1rem">Progression: <span class="status status-{{ progression_status }}">{{ progression_status }}</span></p>
-      {% if not model_used %}
-      <div class="flash flash-warning" style="text-align:left">Prediction not performed — no trained model is loaded, so this severity is a placeholder, not an AI reading.</div>
-      {% endif %}
-    </div>
-
-    <div class="card"><h3>Patient</h3>
-      <dl class="kv">
-        <dt>Name</dt><dd>{{ patient.name }}</dd>
-        <dt>Age</dt><dd>{{ patient.age }}</dd>
-        <dt>Gender</dt><dd>{{ patient.gender }}</dd>
-        <dt>Diabetes history</dt><dd>{{ patient.diabetes_history }}</dd>
-        <dt>Report date</dt><dd>{{ report.date }}</dd>
-      </dl></div>
-
-    <div class="card"><h3>Treatment recommendation</h3><p style="margin:0">{{ recommendation }}</p></div>
-    <div class="card">
-      <h3>AI Explanation</h3>
-
-      {# Show stored LLM summary only if it's a real explanation (not a stub) #}
-      {% set _bad = ['placeholder', '(pending)', 'pending', '', 'none', 'null'] %}
-      {% if llm_summary and llm_summary.lower().strip() not in _bad %}
-        <div class="explain">{{ llm_summary }}</div>
-      {% else %}
-        {# ── Generalized rule-based explanation rendered directly from template variables ── #}
-        <div class="explain" style="line-height:1.75">
-
-          {# ── Sentence 1: What the scan shows ── #}
-          {% if severity == 0 %}
-            <p>The retinal scan for <strong>{{ patient.name }}</strong> appears <strong>normal</strong> with no detectable signs of diabetic retinopathy. The blood vessels and retinal structures look healthy, and there are no micro-aneurysms, haemorrhages, or exudates identified at this stage.</p>
-          {% elif severity == 1 %}
-            <p>The retinal scan for <strong>{{ patient.name }}</strong> shows <strong>mild diabetic retinopathy</strong> — the earliest clinical stage. Minor vascular changes such as small micro-aneurysms may be present, but vision is typically unaffected at this point.</p>
-          {% elif severity == 2 %}
-            <p>The retinal scan for <strong>{{ patient.name }}</strong> reveals <strong>moderate diabetic retinopathy</strong>. Visible abnormalities in the retinal blood vessels — including dot and blot haemorrhages and possible hard exudates — indicate progressive vascular damage that requires closer monitoring.</p>
-          {% elif severity == 3 %}
-            <p>The retinal scan for <strong>{{ patient.name }}</strong> indicates <strong>severe diabetic retinopathy</strong>. Significant vascular damage is present across multiple retinal quadrants, with a high risk of progression to the vision-threatening proliferative stage if not treated promptly.</p>
-          {% else %}
-            <p>The retinal scan for <strong>{{ patient.name }}</strong> shows <strong>proliferative diabetic retinopathy (PDR)</strong> — the most advanced stage. Abnormal new blood vessel growth (neovascularisation) poses an immediate risk to vision and requires urgent specialist intervention.</p>
-          {% endif %}
-
-          {# ── Sentence 2: Confidence ── #}
-          {% if model_used %}
-            {% if confidence_pct >= 80 %}
-              <p>The AI model produced this classification with a <strong>high confidence of {{ confidence_pct }}%</strong>, indicating a clear and unambiguous pattern consistent with this severity stage.</p>
-            {% elif confidence_pct >= 55 %}
-              <p>The AI model produced this classification with a <strong>moderate confidence of {{ confidence_pct }}%</strong>. This may reflect slight image quality variation or a borderline presentation between adjacent severity stages.</p>
-            {% else %}
-              <p>The AI model's confidence is <strong>{{ confidence_pct }}%</strong>, which is relatively low, suggesting this case sits near the boundary between two severity stages. Additional clinical assessment is particularly important here.</p>
-            {% endif %}
-          {% else %}
-            <p>No trained model is currently loaded, so a quantitative confidence score is unavailable. The severity shown is a system placeholder and should not be interpreted as a clinical prediction.</p>
-          {% endif %}
-
-          {# ── Sentence 3: Progression context ── #}
-          {% if progression_status == 'Initial' %}
-            <p>This is the <strong>first scan on record</strong> for this patient, so no comparison with previous visits is available yet. Establishing this baseline is important for tracking future changes.</p>
-          {% elif progression_status == 'Stable' %}
-            <p>Compared with previous scans, the condition appears <strong>stable</strong> with no significant deterioration — an encouraging sign that current management is working.</p>
-          {% elif progression_status == 'Worsened' %}
-            <p>Compared with previous scans, the condition has <strong>worsened</strong>, indicating active disease progression. This change should prompt a reassessment of the patient's glycaemic control and treatment plan.</p>
-          {% elif progression_status == 'Improved' %}
-            <p>Compared with previous scans, the condition shows <strong>improvement</strong> — a positive outcome likely reflecting better blood sugar control or effective treatment response.</p>
-          {% endif %}
-
-          {# ── Sentence 4: Recommendation ── #}
-          <p style="margin-bottom:0">
-            <em style="color:var(--accent)">Clinical note:</em>
-            {% if severity == 0 %}
-              Routine annual screening is recommended. Maintaining good glycaemic, blood pressure, and lipid control remains the best prevention strategy.
-            {% elif severity == 1 %}
-              Follow-up in <strong>6–9 months</strong> is advised. Close monitoring of HbA1c and blood pressure, alongside lifestyle interventions, can prevent progression.
-            {% elif severity == 2 %}
-              An <strong>ophthalmologist consultation</strong> is recommended within 3–6 months. Laser photocoagulation or intravitreal injections may be considered depending on examination findings.
-            {% elif severity == 3 %}
-              <strong>Prompt referral to a retinal specialist</strong> is essential. Pan-retinal photocoagulation (PRP) is often indicated to reduce the risk of progression to PDR.
-            {% else %}
-              <strong>Urgent retinal intervention</strong> is required. Anti-VEGF therapy (e.g. bevacizumab) or vitrectomy may be needed. Immediate specialist review should be arranged without delay.
-            {% endif %}
-            This AI output is a decision-support tool and must be interpreted alongside clinical history, fundoscopy findings, and the judgement of a qualified ophthalmologist.
-          </p>
-
-        </div>
-      {% endif %}
-
-      <div style="margin-top:.9rem;padding:.7rem .9rem;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 .5rem .5rem 0;font-size:.78rem;color:var(--muted)">
-        For a full breakdown of <em>why</em> the model made this prediction — including saliency maps, lesion detection, and counterfactual reasoning —
-        <a href="{{ url_for('xai_explain', report_id=report.report_id) }}" style="color:var(--accent);font-weight:700">open the XAI dashboard →</a>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>Disease Progression</h3>
-      <p class="note" style="margin-top:0">Observed historical analysis from recorded examinations — not a clinical forecast.</p>
-      {% if longitudinal %}
-      <dl class="kv">
-        <dt>Examinations analysed</dt><dd>{{ longitudinal.n_examinations }}</dd>
-        <dt>Overall trend</dt><dd>{{ longitudinal.overall_trend }}</dd>
-        {% if longitudinal.observation_span_days is not none %}
-        <dt>Observation span</dt><dd>{{ longitudinal.observation_span_days }} days</dd>
-        {% endif %}
-      </dl>
-      <p style="margin:.75rem 0 0;font-size:.9rem;line-height:1.55">{{ longitudinal.summary }}</p>
-      {% if longitudinal.previous_vs_current and longitudinal.previous_vs_current.previous %}
-      <div class="compare" style="margin-top:1rem">
-        <div>
-          <p class="note">Previous</p>
-          <p style="margin:0;font-weight:700">{{ longitudinal.previous_vs_current.previous.severity_label }}</p>
-          <p class="muted" style="margin:.2rem 0 0">{{ longitudinal.previous_vs_current.previous.date }}</p>
-        </div>
-        <div>
-          <p class="note">Current</p>
-          <p style="margin:0;font-weight:700">{{ longitudinal.previous_vs_current.current.severity_label }}</p>
-          <p class="muted" style="margin:.2rem 0 0">{{ longitudinal.previous_vs_current.current.date }}</p>
-        </div>
-      </div>
-      {% endif %}
-      {% if longitudinal.risk_context and longitudinal.risk_context.available_factors %}
-      <p class="note" style="margin-top:1rem">Documented context (descriptive only):</p>
-      <ul style="margin:.4rem 0 0;padding-left:1.1rem;font-size:.88rem">
-        {% for factor in longitudinal.risk_context.available_factors %}
-        <li><strong>{{ factor.factor }}:</strong> {{ factor.value }}</li>
-        {% endfor %}
-      </ul>
-      {% endif %}
-      <p class="note" style="margin-top:1rem">{{ longitudinal.forecasting.reason }}</p>
-      {% endif %}
-    </div>
-
+{% if not model_used %}
+<div class="flash flash-warning" role="alert"><span>No valid model prediction is stored for this examination. No severity, confidence or treatment conclusion can be established from this record.</span></div>
+{% endif %}
+<nav class="report-nav" aria-label="Report sections">
+{% for key, title in report_view.sections %}<a href="#report-{{ key }}">{{ '%02d'|format(loop.index) }} {{ title }}</a>{% endfor %}
+</nav>
+<div class="standard-report">
+  <section class="card" id="report-patient" data-report-section="patient">
+    <h2>01. Patient information</h2>
+    <dl class="kv">
+      <dt>Patient ID</dt><dd>#{{ patient.patient_id }}</dd>
+      <dt>Name</dt><dd>{{ patient.name or 'Not provided' }}</dd>
+      <dt>Age</dt><dd>{{ patient.age if patient.age is not none else 'Not provided' }}</dd>
+      <dt>Gender</dt><dd>{{ patient.gender or 'Not provided' }}</dd>
+      <dt>Diabetes history</dt><dd>{{ patient.diabetes_history or 'Not provided' }}</dd>
+      <dt>Examination date</dt><dd>{{ report.date or 'Not recorded' }}</dd>
+      <dt>Report ID</dt><dd>#{{ report.report_id }}</dd>
+    </dl>
+  </section>
+  <section class="card" id="report-screening" data-report-section="screening">
+    <h2>02. Screening result</h2>
+    {% with report_summary=report_view %}{% include "partials/report_summary.html" %}{% endwith %}
+    <p class="note">Model confidence is separate from the model's measured accuracy. The recorded change compares predicted grades, not confirmed clinical outcomes.</p>
+  </section>
+  <section class="card" id="report-interpretation" data-report-section="interpretation">
+    <h2>03. Standardized interpretation</h2>
+    {% for item in report_view.interpretation %}
+    <p><strong>{{ item.label }}:</strong> {{ item.text }}</p>
+    {% endfor %}
+  </section>
+  <section class="card" id="report-recommendation" data-report-section="recommendation">
+    <h2>04. Recommendation</h2>
+    <p>{{ report_view.recommendation }}</p>
+    <p class="note">The responsible clinician should confirm the appropriate next step.</p>
+  </section>
+  <section class="card report-wide" id="report-history" data-report-section="history">
+    <h2>05. History through this examination</h2>
+    <p>{{ longitudinal.summary }}</p>
+    <p class="note">Only examinations through report #{{ report.report_id }} are included. This is an observed history, not a clinical forecast.</p>
     {% if progression %}
-    <div class="card"><h3>Progression timeline</h3>
-      <ul class="timeline">
-        {% for p in progression %}
-        <li><strong>{{ p.date }}</strong> — <span class="status status-{{ p.status }}">{{ p.status }}</span><br>
-          <span class="muted">{% if p.previous_severity is not none %}{{ dr_classes.get(p.previous_severity) }} → {% endif %}{{ dr_classes.get(p.current_severity) }}</span></li>
-        {% endfor %}
-      </ul></div>
-    {% endif %}
-  </div>
-
-  <div>
-    <div class="card"><h3>Scan &amp; Grad-CAM</h3>
-      {% if image_available %}
-      <div class="compare">
-        <div>
-          <div class="img-frame"><img src="{{ image_url }}" alt="Original retinal scan"></div>
-          <p class="note">Original Retinal Image</p>
-        </div>
-        <div>
-          {% if heatmap_available and heatmap_url %}
-          <div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap"></div>
-          <p class="note">Regions the AI Focused On</p>
-          {% else %}
-          <p class="muted">Grad-CAM unavailable for this scan.</p>
-          {% endif %}
-        </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Report</th><th>Date</th><th>Grade</th><th>Recorded change</th></tr></thead>
+      <tbody>{% for row in progression %}<tr>
+        <td><a href="{{ url_for('result', report_id=row.report_id) }}">#{{ row.report_id }}</a></td>
+        <td>{{ row.date }}</td><td>{{ dr_classes.get(row.current_severity) }} · {{ row.current_severity }}/4</td>
+        <td><span class="status status-{{ row.status }}">{{ row.status }}</span></td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    {% else %}<p class="report-empty">No valid model predictions are available for comparison.</p>{% endif %}
+  </section>
+  <section class="card" id="report-imaging" data-report-section="imaging">
+    <h2>06. Scan and Grad-CAM</h2>
+    <div class="compare">
+      <div><h3>Original retinal scan</h3>
+        {% if image_url %}<div class="img-frame"><img src="{{ image_url }}" alt="Original retinal scan for report {{ report.report_id }}" loading="lazy"></div>
+        {% else %}<p class="report-empty">Original scan unavailable for this examination.</p>{% endif %}
       </div>
-
-      {% if heatmap_available and heatmap_url %}
-      <div class="gradcam-overlay-block" data-gradcam-overlay>
-        <div class="img-frame gradcam-blend" id="gradcam-blend">
-          <img src="{{ image_url }}" alt="" aria-hidden="true" class="gradcam-base" draggable="false">
-          <img src="{{ heatmap_url }}" alt="" aria-hidden="true" class="gradcam-heat" id="gradcam-heat" draggable="false" style="opacity:0.62">
-          <span class="gradcam-badge">Grad-CAM Overlay</span>
-        </div>
-        <p class="note" style="margin-top:.75rem">Grad-CAM Overlay</p>
-        <p class="note" style="margin-top:.35rem">
-          Explore how a Grad-CAM-style heatmap can be superimposed on retinal imagery to visualize regions influencing an AI assessment.
-        </p>
-        <p class="note" style="margin-top:.35rem;opacity:.85">
-          Illustrative visualization for demonstration purposes. Highlighted regions do not necessarily indicate retinal disease.
-        </p>
-
-        <div class="gradcam-controls">
-          <div class="gradcam-mode" role="group" aria-label="Overlay display mode">
-            <button type="button" class="gradcam-mode-btn" data-gradcam-mode="original" aria-pressed="false">Original</button>
-            <button type="button" class="gradcam-mode-btn is-active" data-gradcam-mode="overlay" aria-pressed="true">Grad-CAM Overlay</button>
-          </div>
-          <div class="gradcam-slider-row">
-            <label for="gradcam-intensity">Heatmap Intensity</label>
-            <span id="gradcam-intensity-value" class="gradcam-intensity-value" aria-live="polite">62%</span>
-          </div>
-          <input
-            id="gradcam-intensity"
-            class="gradcam-slider"
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            value="62"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow="62"
-            aria-valuetext="62 percent heatmap intensity">
-          <div class="gradcam-slider-ends">
-            <span>0% · Original</span>
-            <span>100% · Strongest overlay</span>
-          </div>
-        </div>
+      <div><h3>Grad-CAM heatmap</h3>
+        {% if heatmap_url %}<div class="img-frame"><img src="{{ heatmap_url }}" alt="Grad-CAM heatmap for report {{ report.report_id }}" loading="lazy"></div>
+        {% else %}<p class="report-empty">Grad-CAM unavailable for this examination.</p>{% endif %}
       </div>
-      <script>
-      (function () {
-        var root = document.querySelector("[data-gradcam-overlay]");
-        if (!root) return;
-        var heat = document.getElementById("gradcam-heat");
-        var slider = document.getElementById("gradcam-intensity");
-        var valueEl = document.getElementById("gradcam-intensity-value");
-        var buttons = root.querySelectorAll("[data-gradcam-mode]");
-        var mode = "overlay";
-        var intensity = 62;
-
-        function apply() {
-          var opacity = mode === "original" ? 0 : intensity / 100;
-          heat.style.opacity = String(opacity);
-          var shown = Math.round(opacity * 100);
-          valueEl.textContent = shown + "%";
-          slider.value = String(shown);
-          slider.setAttribute("aria-valuenow", String(shown));
-          slider.setAttribute(
-            "aria-valuetext",
-            shown === 0 ? "Original image only" : shown + " percent heatmap intensity"
-          );
-          buttons.forEach(function (btn) {
-            var active = btn.getAttribute("data-gradcam-mode") === mode;
-            btn.classList.toggle("is-active", active);
-            btn.setAttribute("aria-pressed", active ? "true" : "false");
-          });
-        }
-
-        buttons.forEach(function (btn) {
-          btn.addEventListener("click", function () {
-            mode = btn.getAttribute("data-gradcam-mode") || "overlay";
-            apply();
-          });
-        });
-
-        slider.addEventListener("input", function () {
-          intensity = Number(slider.value) || 0;
-          mode = intensity === 0 ? "original" : "overlay";
-          apply();
-        });
-
-        apply();
-      })();
-      </script>
-      {% endif %}
-      {% else %}
-      <p class="muted" style="margin:0">Original retinal image is not available in storage for this report.</p>
-      <p class="note">Upload a follow-up scan for this patient to create a complete examination record.</p>
-      {% endif %}
     </div>
-    {% if progression_graph_url %}
-    <div class="card"><h3>Progression history</h3>
-      <div class="img-frame" style="background:#fff"><img src="{{ progression_graph_url }}" alt="Progression graph"></div></div>
-    {% endif %}
-    {% if simulation_url %}
-    <div class="card">
-      <h3>Illustrative Spatial Simulation</h3>
-      <p class="note" style="margin-top:0"><strong>Illustrative Spatial Simulation — Not a Clinical Forecast</strong></p>
-      <div class="img-frame"><img src="{{ simulation_url }}" alt="Illustrative spatial simulation based on Grad-CAM attention"></div>
-      <p class="note" style="margin-top:.75rem">{{ simulation_method }}</p>
-      <p class="note">Separate from the historical Disease Progression analysis above. Grad-CAM intensity does not predict where diabetic retinopathy will spread.</p>
+    {% if image_url and heatmap_url and model_used %}
+    <div class="gradcam-overlay-block" data-gradcam-overlay>
+      <div class="img-frame gradcam-blend">
+        <img src="{{ image_url }}" alt="Original retinal scan" class="gradcam-base" draggable="false">
+        <img src="{{ heatmap_url }}" alt="Grad-CAM overlay" class="gradcam-heat" id="gradcam-heat" draggable="false" style="opacity:.62">
+        <span class="gradcam-badge">Grad-CAM Overlay</span>
+      </div>
+      <div class="gradcam-controls">
+        <div class="gradcam-mode" role="group" aria-label="Overlay display mode">
+          <button type="button" class="gradcam-mode-btn" data-gradcam-mode="original" aria-pressed="false">Original</button>
+          <button type="button" class="gradcam-mode-btn is-active" data-gradcam-mode="overlay" aria-pressed="true">Grad-CAM Overlay</button>
+        </div>
+        <div class="gradcam-slider-row"><label for="gradcam-intensity">Heatmap intensity</label><output id="gradcam-intensity-value" for="gradcam-intensity">62%</output></div>
+        <input id="gradcam-intensity" class="gradcam-slider" type="range" min="0" max="100" value="62" aria-valuetext="62 percent heatmap intensity">
+      </div>
     </div>
-    {% elif model_used and image_available and heatmap_available %}
-    <div class="card"><h3>Illustrative Spatial Simulation</h3>
-      <p class="muted" style="margin:0">Simulation could not be generated for this examination.</p></div>
     {% endif %}
-  </div>
+    <p class="note">Grad-CAM highlights model attention; it does not independently confirm retinal lesions.</p>
+  </section>
+  <section class="card" id="report-simulation" data-report-section="simulation">
+    <h2>07. Illustrative spatial simulation</h2>
+    <p class="note"><strong>Illustrative spatial simulation — not a clinical forecast</strong></p>
+    {% if simulation_url %}<div class="img-frame"><img src="{{ simulation_url }}" alt="Illustrative attention remapping for report {{ report.report_id }}" loading="lazy"></div>
+    {% else %}<p class="report-empty">Simulation unavailable for this examination. A source scan and usable Grad-CAM are required.</p>{% endif %}
+    <p class="note">{{ simulation_method }}</p>
+    <p class="note">This does not predict future lesions or disease spread.</p>
+  </section>
+  <section class="card report-wide" id="report-supplemental" data-report-section="supplemental">
+    <h2>08. Supplementary AI explanation</h2>
+    {% if report_view.llm_summary %}<div class="explain">{{ report_view.llm_summary }}</div>
+    {% else %}<p class="report-empty">No supplementary AI explanation is stored for this examination.</p>{% endif %}
+    <p class="note">Supplementary AI text is stored narrative and requires clinician review. The standardized interpretation above is based on recorded examination fields.</p>
+  </section>
 </div>
+<p class="note report-disclaimer">{{ report_view.disclaimer }}</p>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var root = document.querySelector('[data-gradcam-overlay]');
+  if (!root) return;
+  var heat = root.querySelector('#gradcam-heat');
+  var slider = root.querySelector('#gradcam-intensity');
+  var output = root.querySelector('#gradcam-intensity-value');
+  var buttons = root.querySelectorAll('[data-gradcam-mode]');
+  var mode = 'overlay', intensity = 62;
+  function apply() {
+    var shown = mode === 'original' ? 0 : intensity;
+    heat.style.opacity = String(shown / 100);
+    slider.value = String(shown);
+    slider.setAttribute('aria-valuetext', shown + ' percent heatmap intensity');
+    output.textContent = shown + '%';
+    buttons.forEach(function (button) {
+      var active = button.dataset.gradcamMode === mode;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
+  buttons.forEach(function (button) { button.addEventListener('click', function () {
+    mode = button.dataset.gradcamMode; apply();
+  }); });
+  slider.addEventListener('input', function () {
+    intensity = Number(slider.value); mode = intensity === 0 ? 'original' : 'overlay'; apply();
+  });
+  apply();
+})();
+</script>
 {% endblock %}

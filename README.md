@@ -145,7 +145,8 @@ NammaRetina/
 ├── evaluation_reports.py      # Load evaluation runs for admin UI
 ├── treatment.py               # Treatment recommendations (Phase 8)
 ├── llm_agent.py               # LLM integration (Phase 9)
-├── report_generator.py        # PDF report generation (Phase 12)
+├── reporting.py               # Shared examination snapshot and report format
+├── report_generator.py        # Standardized PDF report generation
 ├── requirements.txt           # Python dependencies
 ├── database.db                # SQLite database
 ├── APTOS-19/                  # Dataset metadata (CSVs)
@@ -216,6 +217,25 @@ g7 — Pranav, Chandan, Jyotir, Jhenka
 ## Regression checks and deployment
 
 Run `.venv/bin/python -m unittest discover -s tests -v` (or `python` in your activated environment).
+
+### Standardized patient reports
+
+Every examination uses the same eight sections in the browser and PDF: patient information,
+screening result, standardized interpretation, recommendation, history through that examination,
+scan and Grad-CAM, illustrative spatial simulation, and supplementary AI explanation.
+Missing images or supplementary text leave an explicit unavailable notice; they do not remove
+sections. A valid recorded result can still be exported when its images are unavailable.
+
+`reporting.py` builds the shared snapshot. Comparisons exclude later examinations, including
+later reports on the same day, and ignore records without a valid prediction. Patient overview
+and directory status use the same report-derived history instead of a potentially stale
+Progression row. Stored AI prose is supplementary; the main interpretation uses recorded fields.
+
+PDF format v2 uses `report_<id>_v2.pdf` locally and `reports/pdfs/report_<id>_v2.pdf` in Storage.
+Opening Export PDF automatically builds this format if it is missing; old PDFs do not need a
+database migration. Regenerate PDF explicitly rebuilds it. Text is escaped and wrapped, images
+preserve their aspect ratio, and complete files replace the cache atomically. Optional AI-text,
+PDF, or PDF-storage failures retain the saved examination and allow later export retries.
 The suite mocks external services and must not write to production Supabase. Legacy SQLite `db_path`
 arguments now fail explicitly rather than silently writing to the configured Supabase project.
 

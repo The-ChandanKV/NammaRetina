@@ -404,3 +404,31 @@ footer.site-footer {
   .workspace { margin: 0; }
   body { background: #fff; color: #000; }
 }
+
+/* All examination reports use the same section order and missing-data states. */
+.report-breadcrumb { margin: 0 0 .75rem; font-size: .82rem; }
+.report-actions { display: flex; gap: .55rem; flex-wrap: wrap; }
+.report-actions form { margin: 0; }
+.report-nav { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: 0 0 1.2rem; font-size: .78rem; }
+.standard-report { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.2rem; }
+.standard-report .card { min-width: 0; margin: 0; scroll-margin-top: 1rem; }
+.standard-report h2 { font-size: 1.05rem; margin-bottom: 1rem; }
+.standard-report h3 { font-size: .82rem; }
+.standard-report .report-wide { grid-column: 1 / -1; }
+.standard-report .kv { grid-template-columns: minmax(100px, 130px) minmax(0, 1fr); }
+.standard-report .kv dd, .standard-report p, .standard-report .explain, .report-summary dd { overflow-wrap: anywhere; }
+.report-empty { padding: 1rem; border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--muted); font-size: .86rem; background: #f8fafc; }
+.report-disclaimer { margin-top: 1.2rem; }
+@media (max-width: 760px) {
+  .standard-report { grid-template-columns: minmax(0, 1fr); }
+  .standard-report .report-wide { grid-column: auto; }
+}
+@media print {
+  .sidebar, .topbar-mobile, .report-actions, .report-nav, .gradcam-controls { display: none !important; }
+  .workspace { margin-left: 0; }
+  .workspace-inner { padding: 0; max-width: none; }
+  .standard-report { display: block; }
+  .standard-report .card { margin-bottom: 1rem; box-shadow: none; }
+  .standard-report h2 { break-after: avoid; }
+  .standard-report img { max-height: 70mm; object-fit: contain; }
+}

@@ -1,0 +1,7 @@
+{# Reused by the examination report and patient overview. #}
+<dl class="kv report-summary">
+  <dt>Classification</dt><dd><span class="sev{% if report_summary.report.model_used %} sev-{{ report_summary.report.severity }}{% endif %}">{{ report_summary.report.severity_label }}</span></dd>
+  <dt>Grade</dt><dd>{% if report_summary.report.model_used %}{{ report_summary.report.severity }}/4{% else %}Unavailable{% endif %}</dd>
+  <dt>Model confidence</dt><dd>{% if report_summary.report.model_used %}{{ '%.1f'|format(report_summary.report.confidence_pct) }}%{% else %}Unavailable{% endif %}</dd>
+  <dt>Recorded change</dt><dd><span class="status status-{{ report_summary.progression_status }}">{{ report_summary.progression_status }}</span></dd>
+</dl>

@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from html.parser import HTMLParser
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -24,6 +25,7 @@ import preprocess_local
 import progression
 import xai_engine
 import httpx
+from reporting import REPORT_SECTIONS, pdf_filename
 
 
 class RegressionTests(unittest.TestCase):
@@ -214,6 +216,8 @@ class RegressionTests(unittest.TestCase):
     def test_followup_preserves_id_and_actual_model_scores(self):
         self.login()
         self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
+        self.patch(web, "get_report", return_value=self.report)
         create = self.patch(web, "add_patient")
         scores = [0.02, 0.03, 0.8, 0.1, 0.05]
         self.patch(web, "predict_severity", return_value={"model_used": True, "severity": 2, "confidence": 0.8, "severity_label": "Moderate", "probabilities": scores})
@@ -222,11 +226,9 @@ class RegressionTests(unittest.TestCase):
         upload = self.patch(web, "upload_file")
         save = self.patch(web, "add_report", return_value=7)
         track = self.patch(web, "track_progression", return_value={"status": "Initial"})
-        self.patch(web, "plot_progression", return_value=None)
-        self.patch(web, "get_progression_history", return_value=[])
         self.patch(web, "explain_report", return_value="Summary")
         self.patch(web, "update_report_llm_summary")
-        self.patch(web, "generate_pdf", return_value=str(web.REPORT_DIR / "report_7.pdf"))
+        self.patch(web, "generate_pdf", return_value=str(web.REPORT_DIR / pdf_filename(7)))
         form = self.form()
         form["patient_id"] = "5"
         response = self.client.post("/upload", data=form)
@@ -243,7 +245,7 @@ class RegressionTests(unittest.TestCase):
         self.login()
         self.patch(web, "get_report", return_value=self.report)
         def download(storage, destination):
-            self.assertEqual(storage, "reports/pdfs/report_7.pdf")
+            self.assertEqual(storage, "reports/pdfs/report_7_v2.pdf")
             Path(destination).write_bytes(b"%PDF-offline-test")
             return str(destination)
         self.patch(web, "download_storage_file", side_effect=download)
@@ -265,32 +267,32 @@ class RegressionTests(unittest.TestCase):
         self.login()
         self.patch(web, "get_report", return_value=self.report)
         self.patch(web, "get_patient", return_value=self.patient)
-        self.patch(web, "get_progression_history", return_value=[])
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
         self.patch(web, "ensure_simulation_for_report", return_value=None)
         self.patch(web, "simulation_filename_for_image", return_value=None)
         self.patch(web, "resolve_artifact", return_value=None)
-        pdf = str(web.REPORT_DIR / "report_7.pdf")
+        pdf = str(web.REPORT_DIR / pdf_filename(7))
         self.patch(web, "generate_pdf", return_value=pdf)
         upload = self.patch(web, "upload_file")
         response = self.client.post("/report/7/regenerate", data={"csrf_token": "test-csrf"})
         self.assertEqual(response.location, "/result/7")
-        upload.assert_called_once_with(pdf, "reports", "pdfs/report_7.pdf")
+        upload.assert_called_once_with(pdf, "reports", "pdfs/report_7_v2.pdf")
 
     def test_missing_pdf_is_rebuilt_on_download(self):
         self.login()
         self.patch(web, "get_report", return_value=self.report)
         self.patch(web, "get_patient", return_value=self.patient)
-        self.patch(web, "get_progression_history", return_value=[])
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
         self.patch(web, "ensure_simulation_for_report", return_value=None)
         self.patch(web, "simulation_filename_for_image", return_value=None)
         self.patch(web, "resolve_artifact", return_value=None)
-        pdf = web.REPORT_DIR / "report_7.pdf"
+        pdf = web.REPORT_DIR / pdf_filename(7)
         self.patch(web, "generate_pdf", side_effect=lambda **kwargs: (pdf.write_bytes(b"%PDF-rebuilt"), str(pdf))[1])
         upload = self.patch(web, "upload_file")
         response = self.client.get("/download/7")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b"%PDF-rebuilt")
-        upload.assert_called_once_with(str(pdf), "reports", "pdfs/report_7.pdf")
+        upload.assert_called_once_with(str(pdf), "reports", "pdfs/report_7_v2.pdf")
         response.close()
 
     def test_legacy_placeholder_pdf_and_xai_are_blocked(self):
@@ -309,11 +311,172 @@ class RegressionTests(unittest.TestCase):
         response = self.client.get("/result/7")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"status-Initial", response.data)
+        self.assertNotIn(b"2026-02-01", response.data)
+        self.assertNotIn(b"/result/8", response.data)
+
+    def test_report_sections_stay_identical_for_every_grade_and_missing_content(self):
+        self.login()
+        self.patch(web, "get_connection", return_value=self.connection())
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
+        self.patch(web, "resolve_artifact", return_value=None)
+        self.patch(web, "storage_object_exists", return_value=False)
+
+        class Sections(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.sections = []
+
+            def handle_starttag(self, tag, attrs):
+                section = dict(attrs).get("data-report-section")
+                if section:
+                    self.sections.append(section)
+
+        for severity, confidence, summary in [
+            (0, .9, ""), (1, .6, "(pending)"), (2, .8, "Stored explanation"),
+            (3, .7, "placeholder"), (4, .95, "None"), (0, 0, ""), (None, None, ""),
+        ]:
+            with self.subTest(severity=severity, confidence=confidence):
+                self.report.update(severity=severity, confidence=confidence, llm_summary=summary)
+                response = self.client.get("/result/7")
+                self.assertEqual(response.status_code, 200)
+                parser = Sections()
+                parser.feed(response.get_data(as_text=True))
+                self.assertEqual(parser.sections, [key for key, _ in REPORT_SECTIONS])
+                if confidence:
+                    self.assertIn(b'id="btn-pdf"', response.data)
+                else:
+                    self.assertNotIn(b'id="btn-pdf"', response.data)
+                    self.assertNotIn(b"appears normal", response.data)
+
+    def test_complete_report_keeps_images_overlay_and_safe_supplementary_text(self):
+        self.login()
+        self.report.update(heatmap_path="heatmaps/heatmaps/heat.png", llm_summary="<script>alert('test')</script>")
+        self.patch(web, "get_connection", return_value=self.connection())
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
+        self.patch(web, "resolve_artifact", return_value=None)
+        self.patch(web, "storage_object_exists", return_value=True)
+        self.patch(web, "storage_path_to_signed_url", side_effect=lambda p: "/test/" + Path(p).name)
+        sim = self.patch(web, "ensure_simulation_for_report", return_value="/test/simulation.png")
+        response = self.client.get("/result/7")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'data-gradcam-overlay', response.data)
+        self.assertIn(b'/test/scan.png', response.data)
+        self.assertIn(b'/test/heat.png', response.data)
+        self.assertIn(b'/test/simulation.png', response.data)
+        self.assertIn(b'&lt;script&gt;', response.data)
+        self.assertNotIn(b"<script>alert", response.data)
+        self.assertEqual(sim.call_args.args[1][0]["status"], "Initial")
+
+    def test_patient_and_examination_share_latest_result_and_status(self):
+        self.login()
+        self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_reports_for_patient", return_value=[
+            dict(self.report, report_id=6, severity=4, date="2025-12-01"), self.report,
+        ])
+        self.patch(web, "storage_path_to_signed_url", return_value="")
+        # No separate Progression table is needed to produce a consistent view.
+        response = self.client.get("/patient/5")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"status-Improved", response.data)
+        self.assertIn(b"80.0%", response.data)
+        self.assertIn(b"Model confidence", response.data)
+        self.assertIn(b"/download/7", response.data)
+
+    def test_old_pdf_cache_is_rebuilt_using_current_format(self):
+        self.login()
+        self.patch(web, "get_report", return_value=self.report)
+        self.patch(web, "resolve_artifact", return_value=None)
+        (web.REPORT_DIR / "report_7.pdf").write_bytes(b"%PDF-old-format")
+        destination = web.REPORT_DIR / pdf_filename(7)
+        def rebuild(report):
+            destination.write_bytes(b"%PDF-standardized")
+            return str(destination)
+        build = self.patch(web, "_build_report_pdf", side_effect=rebuild)
+        with self.client.get("/download/7") as response:
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data, b"%PDF-standardized")
+        build.assert_called_once()
+
+    def test_pdf_builder_uses_selected_examination_history_without_images(self):
+        self.login()
+        self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_reports_for_patient", return_value=[
+            dict(self.report, report_id=8, severity=4, date="2026-02-01"), self.report,
+        ])
+        self.patch(web, "resolve_artifact", return_value=None)
+        render = self.patch(web, "generate_pdf", return_value="/test/report.pdf")
+        self.patch(web, "upload_file", side_effect=RuntimeError("Storage unavailable"))
+        self.assertEqual(web._build_report_pdf(self.report), "/test/report.pdf")
+        context = render.call_args.kwargs["report_context"]
+        self.assertEqual(context["longitudinal"]["n_examinations"], 1)
+        self.assertEqual(context["progression_status"], "Initial")
+        self.assertIsNone(render.call_args.kwargs["image_path"])
+        self.assertNotIn("progression_graph_path", render.call_args.kwargs)
+
+    def test_real_pdf_download_rebuild_and_cache(self):
+        self.login()
+        self.patch(web, "get_report", return_value=self.report)
+        self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
+        self.patch(web, "resolve_artifact", return_value=None)
+        upload = self.patch(web, "upload_file")
+        # A truncated local cache must be rebuilt too.
+        (web.REPORT_DIR / pdf_filename(7)).write_bytes(b"")
+        with self.client.get("/download/7") as response:
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.mimetype, "application/pdf")
+            self.assertTrue(response.data.startswith(b"%PDF-"))
+            self.assertTrue(response.data.rstrip().endswith(b"%%EOF"))
+            content = response.data
+        upload.assert_called_once()
+        with self.client.get("/download/7") as response:
+            self.assertEqual(response.data, content)
+        upload.assert_called_once()
+
+    def test_saved_upload_survives_optional_llm_and_pdf_failures(self):
+        self.login()
+        self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
+        self.patch(web, "get_report", return_value=self.report)
+        self.patch(web, "predict_severity", return_value={
+            "model_used": True, "severity": 2, "confidence": .8,
+            "severity_label": "Moderate", "probabilities": [.02, .03, .8, .1, .05],
+        })
+        self.patch(web, "load_model", return_value=object())
+        self.patch(web, "generate_gradcam", return_value=None)
+        self.patch(web, "upload_file")
+        save = self.patch(web, "add_report", return_value=7)
+        self.patch(web, "track_progression", side_effect=RuntimeError("Secondary table unavailable"))
+        self.patch(web, "explain_report", side_effect=RuntimeError("LLM unavailable"))
+        self.patch(web, "_build_report_pdf", side_effect=RuntimeError("PDF unavailable"))
+        form = self.form()
+        form["patient_id"] = "5"
+        response = self.client.post("/upload", data=form)
+        self.assertEqual(response.location, "/result/7")
+        save.assert_called_once()
+        with self.client.session_transaction() as session:
+            messages = " ".join(message for _, message in session.get("_flashes", []))
+        self.assertIn("scan was saved", messages)
+        self.assertNotIn("Analysis failed", messages)
+
+    def test_directory_status_agrees_with_report_without_progression_rows(self):
+        previous = dict(self.report, report_id=6, severity=3, date="2025-12-01")
+        def execute(sql, params=()):
+            if "FROM Patients" in sql:
+                return database._FakeResult([self.patient])
+            if "FROM Reports" in sql:
+                return database._FakeResult([self.report, previous])
+            raise AssertionError("Directory should use report-derived history")
+        self.patch(web, "get_connection", return_value=SimpleNamespace(execute=execute, close=lambda: None))
+        directory = web._build_patient_directory()
+        self.assertEqual(directory[0]["latest_status"], "Improved")
+        self.assertEqual(directory[0]["latest_severity"], 2)
 
     def test_reports_list_shows_all_reports(self):
         self.login()
         self.patch(web, "get_all_reports", return_value=[self.report])
         self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
         response = self.client.get("/reports")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Reports", response.data)
@@ -346,6 +509,7 @@ class RegressionTests(unittest.TestCase):
     def test_followup_form_contains_patient_id(self):
         self.login()
         self.patch(web, "get_patient", return_value=self.patient)
+        self.patch(web, "get_reports_for_patient", return_value=[self.report])
         response = self.client.get("/scan?patient_id=5")
         self.assertIn(b'name="patient_id" value="5"', response.data)
 
